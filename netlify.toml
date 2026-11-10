@@ -1,0 +1,8 @@
+# Security headers (CSP and friends) are in public/_headers, so they apply to Git builds and zip deploys alike.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"

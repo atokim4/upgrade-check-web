@@ -1,0 +1,32 @@
+{
+  "name": "upgrade-check-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Paste a public GitHub repo and see what the Nov-Dec 2026 upgrades (Supabase CLI v3, Node.js 26 LTS, @supabase/server adapters, Supabase grants) break in it. Runs in the browser.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Sunnatulla E.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "sync-engines": "node scripts/sync-engines.mjs",
+    "check": "npm run typecheck && npm test && vite build"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@fontsource/ibm-plex-sans": "5.3.0",
+    "semver": "7.8.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "22.20.5",
+    "@types/semver": "7.8.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.7",
+    "vitest": "5.1.0"
+  }
+}

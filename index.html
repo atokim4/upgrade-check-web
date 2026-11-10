@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Upgrade check: will the Nov-Dec 2026 upgrades break your repo?</title>
+    <meta
+      name="description"
+      content="Paste a public GitHub repo and see what Supabase CLI v3, Node.js 26 LTS, the @supabase/server adapter removal and the Supabase grants change break in it, with the line and the fix. Runs in your browser."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to the checker</a>
+    <header class="masthead">
+      <div class="wrap">
+        <p class="brand"><svg aria-hidden="true" viewBox="0 0 24 24" class="brand-mark"><path d="M4 4h11l5 5v11H4z" /><path d="M8 13l3 3 5-6" /></svg> Upgrade check</p>
+        <h1>Will the Nov&ndash;Dec 2026 upgrades break your repo?</h1>
+        <p class="lede">
+          Paste a public GitHub repository. This page reads its CI, Docker, config and source files and shows each
+          line that breaks on the upgrades below, why, and the fix.
+        </p>
+        <ul class="changes" aria-label="Changes it checks">
+          <li><time datetime="2026-10-28">Oct 28</time> Node.js 26 becomes LTS: no corepack, no Yarn in node:26 images</li>
+          <li><time datetime="2026-10-30">Oct 30</time> Supabase stops granting new tables to the Data API</li>
+          <li><time datetime="2026-11-02">Nov 2</time> Supabase CLI v3: removed commands, flags and config sections</li>
+          <li><time datetime="2026-12-01">Dec 1</time> <span><code>@supabase/server</code> adapters are removed</span></li>
+        </ul>
+      </div>
+    </header>
+
+    <main id="main" class="wrap">
+      <form id="check-form" class="intake" novalidate>
+        <label for="repo-input" class="intake-label">Public GitHub repository</label>
+        <div class="intake-row">
+          <input
+            id="repo-input"
+            name="repo"
+            type="text"
+            inputmode="url"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="owner/repo or https://github.com/owner/repo"
+            aria-describedby="repo-hint repo-error"
+          />
+          <button type="submit" id="check-button" class="btn btn-primary">Check repo</button>
+        </div>
+        <p id="repo-error" class="field-error" role="alert" hidden></p>
+        <p id="repo-hint" class="hint">
+          A branch, tag or commit works too: <code>owner/repo@v2.1.0</code> or a <code>/tree/&lt;ref&gt;</code> link.
+          Or
+          <label class="link-like" for="folder-input">choose a folder on this computer</label><input id="folder-input" type="file" webkitdirectory multiple class="visually-hidden" />,
+          or drop one here.
+        </p>
+        <p class="examples">
+          <span>Try:</span>
+          <button type="button" class="chip" data-example="vercel/nextjs-subscription-payments">vercel/nextjs-subscription-payments</button>
+          <button type="button" class="chip" data-example="kpi-ua/schedule.kpi.ua@6d5e7ba14d">kpi-ua/schedule.kpi.ua@6d5e7ba14d</button>
+        </p>
+        <div class="drop-overlay" aria-hidden="true"><p>Drop the folder to check it</p></div>
+      </form>
+
+      <p class="privacy">
+        <svg aria-hidden="true" viewBox="0 0 24 24" class="icon"><rect x="5" y="11" width="14" height="9" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
+        <span>Everything runs in this tab. Files go from GitHub (or your disk) to your browser and nowhere else: no server, no analytics, no cookies.</span>
+      </p>
+
+      <p id="rate" class="rate" aria-live="polite"></p>
+
+      <section id="status" class="status" aria-live="polite" hidden>
+        <p id="status-text"></p>
+        <progress id="status-progress" max="1" value="0"></progress>
+      </section>
+
+      <section id="results" class="results" tabindex="-1" hidden></section>
+    </main>
+
+    <footer class="colophon">
+      <div class="wrap">
+        <p>
+          A personal project by Sunnatulla E. The checks are the open-source scanners
+          <a href="https://github.com/atokim4/supabase-cli-v3-upgrade">supabase-cli-v3-upgrade</a>,
+          <a href="https://github.com/atokim4/node26-lts-upgrade">node26-lts-upgrade</a> and
+          <a href="https://github.com/atokim4/vibe-preflight">vibe-preflight</a>, bundled for the browser.
+          <a href="https://github.com/atokim4/upgrade-check-web">Source of this page</a> (MIT).
+        </p>
+        <p>Not affiliated with Supabase, GitHub or the Node.js project.</p>
+      </div>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

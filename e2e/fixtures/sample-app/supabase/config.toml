@@ -1,0 +1,5 @@
+project_id = "sample-app"
+
+[inbucket]
+enabled = true
+port = 54324

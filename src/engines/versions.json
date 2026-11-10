@@ -1,0 +1,14 @@
+{
+  "supabase-cli-v3": {
+    "repo": "atokim4/supabase-cli-v3-upgrade",
+    "version": "0.1.1"
+  },
+  "node26": {
+    "repo": "atokim4/node26-lts-upgrade",
+    "version": "0.1.1"
+  },
+  "preflight": {
+    "repo": "atokim4/vibe-preflight",
+    "version": "1.6.1"
+  }
+}
