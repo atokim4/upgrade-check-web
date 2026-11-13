@@ -7,7 +7,7 @@ const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 export default defineConfig({
   // The synced engines import basename/extname/posix from node:path; the browser gets a small shim.
   resolve: { alias: { "node:path": here("./src/lib/path-shim.ts") } },
-  // Several real HTML pages, no SPA fallback: an unknown path is a 404, /gpt-4o-shutdown serves its own index.html.
+  // Several real HTML pages, no SPA fallback: an unknown path is a 404.
   appType: "mpa",
   plugins: [deadlinePages()],
   build: {
