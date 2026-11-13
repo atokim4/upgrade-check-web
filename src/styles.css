@@ -196,6 +196,24 @@ h1 {
   color: var(--ink-soft);
 }
 
+/* Scanner page additions */
+.changes-more {
+  margin: 0.9rem 0 0;
+  font-size: 0.95rem;
+}
+.changes a {
+  text-decoration-color: var(--rule);
+}
+
+.only-note {
+  font-size: 0.9rem;
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--amber-soft);
+  border-radius: var(--radius);
+  color: var(--ink);
+}
+
 /* Intake */
 .intake {
   position: relative;

@@ -56,6 +56,28 @@ function onlyParam(): CheckerId[] {
   return (new URLSearchParams(location.search).get("only") ?? "").split(",").filter((id): id is CheckerId => ids.has(id));
 }
 
+/** Says which checkers a `?only=` link limits the scan to, with a way back to all of them. */
+function showOnly(): void {
+  const only = onlyParam();
+  if (!only.length) return;
+  const link = Object.assign(document.createElement("a"), { href: "/", textContent: "run every check" });
+  // The repo may have changed since load (history.replaceState), so the link is built when it's used.
+  link.addEventListener("click", () => {
+    const all = new URL(location.href);
+    all.searchParams.delete("only");
+    link.href = all.pathname + all.search;
+  });
+  const note = $<HTMLParagraphElement>("only-note");
+  note.replaceChildren(
+    `Only checking: ${CHECKERS.filter((c) => only.includes(c.id))
+      .map((c) => c.name)
+      .join(", ")}. You can also `,
+    link,
+    ".",
+  );
+  note.hidden = false;
+}
+
 async function show(repo: LoadedRepo): Promise<void> {
   statusText.textContent = "Running the checks";
   const report = await runChecks(repo, undefined, onlyParam());
@@ -69,7 +91,11 @@ function errorView(err: unknown, ref?: RepoRef): ErrorView {
   if (err instanceof GitHubError) {
     switch (err.kind) {
       case "not-found":
-        return { title: "Can't read this repository", body: `${err.message} This page only reads public repositories and never asks for a token.`, offerLocal: true };
+        return {
+          title: "Can't read this repository",
+          body: `${err.message} This page only reads public repositories and never asks for a token.`,
+          offerLocal: true,
+        };
       case "rate-limited":
         return {
           title: "GitHub's anonymous limit is used up",
@@ -79,7 +105,11 @@ function errorView(err: unknown, ref?: RepoRef): ErrorView {
       case "empty":
         return { title: "Nothing to check yet", body: err.message, offerLocal: false };
       default:
-        return { title: ref ? `Couldn't finish reading ${repoLabel(ref)}` : "Couldn't finish reading the repository", body: err.message, offerLocal: false };
+        return {
+          title: ref ? `Couldn't finish reading ${repoLabel(ref)}` : "Couldn't finish reading the repository",
+          body: err.message,
+          offerLocal: false,
+        };
     }
   }
   return { title: "Something went wrong", body: `The check stopped with: ${(err as Error).message ?? String(err)}`, offerLocal: false };
@@ -172,6 +202,8 @@ document.addEventListener("drop", async (e) => {
   const dropped = await collectDropped(e.dataTransfer);
   if (dropped) void checkFolder(dropped.name, dropped.files, dropped.truncated);
 });
+
+showOnly();
 
 const initial = new URLSearchParams(location.search).get("repo");
 if (initial) {

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>2026-27 shutdown dates for developers: days left and what breaks</title>
+    <meta
+      name="description"
+      content="Every API shutdown and breaking release the upgrade check scans for, by date: GPT-4o, Claude Sonnet 4.5, Gemini 2.5, Prisma Accelerate, Google Custom Search, Val Town, Deno Deploy, Postgres 18, n8n 3.0."
+    />
+    <link rel="canonical" href="https://upgrade-check-2026.netlify.app/deadlines" />
+    <meta property="og:title" content="2026-27 shutdown dates for developers" />
+    <meta property="og:url" content="https://upgrade-check-2026.netlify.app/deadlines" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body class="page-deadlines">
+    <a class="skip" href="#main">Skip to the dates</a>
+    <nav class="crumbs wrap" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="/">Upgrade check</a></li>
+        <li><span aria-current="page">Deadlines</span></li>
+      </ol>
+    </nav>
+    <main id="main" class="wrap">
+      <header class="board-head">
+        <h1>Shutdowns and breaking releases, 2026&ndash;27</h1>
+        <p class="lede">
+          Each date comes from the vendor's own page, with a link. The days left are counted from your device's clock. Every row has a scanner that
+          looks for it in a public GitHub repo.
+        </p>
+        <p class="board-today" data-today hidden></p>
+      </header>
+      <!--dl:timetable-->
+      <p class="board-note">
+        Dates and wording re-read on the official pages on
+        <!--dl:readon-->. Vendors move dates; the official page wins.
+      </p>
+    </main>
+    <!--dl:footer-->
+    <script type="module" src="/src/deadlines/client.ts"></script>
+  </body>
+</html>

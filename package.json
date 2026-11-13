@@ -2,7 +2,7 @@
   "name": "upgrade-check-web",
   "version": "0.1.0",
   "private": true,
-  "description": "Paste a public GitHub repo and see what the Nov-Dec 2026 upgrades (Supabase CLI v3, Node.js 26 LTS, @supabase/server adapters, Supabase grants) break in it. Runs in the browser.",
+  "description": "Is your repo hit by a 2026-27 shutdown? Paste a public GitHub repo and see what GPT-4o, Claude Sonnet 4.5, Gemini 2.5, Prisma Accelerate, Google Custom Search, Val Town/Deno Deploy, Postgres 18, n8n 3.0, Node 26 and Supabase changes break in it, plus a page per deadline. Runs in the browser.",
   "type": "module",
   "license": "MIT",
   "author": "Sunnatulla E.",

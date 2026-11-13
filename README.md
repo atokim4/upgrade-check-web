@@ -4,7 +4,7 @@ A static page that tells you which 2026-27 shutdowns and upgrades hit a reposito
 (or pick a folder on your computer) and it lists each line that breaks, why, the source the rule is based on,
 and a diff for the cases that can be rewritten safely.
 
-**Live:** https://upgrade-check-2026.netlify.app
+**Live:** https://upgrade-check-2026.netlify.app · every date with days left: https://upgrade-check-2026.netlify.app/deadlines
 
 | Date | Change | Checker |
 | --- | --- | --- |
@@ -75,6 +75,23 @@ the Content-Security-Policy in `public/_headers` enforces that (`connect-src` li
 no cookies, no third-party fonts (IBM Plex is self-hosted). Private repositories can't be read: the page never
 asks for a token.
 
+## Deadline pages
+
+`/deadlines` lists every change above by date, with the official source, the checker that looks for it, and the
+days left counted from the visitor's own clock (a "today" rule sits between what has passed and what is ahead).
+Eight changes also have their own page with what breaks and how to fix it, and a scanner form limited to that
+checker (`/?only=<id>&repo=…`):
+
+`/gpt-4o-shutdown` · `/claude-sonnet-4-5-retirement` · `/prisma-accelerate-shutdown` · `/gemini-2-5-shutdown` ·
+`/google-custom-search-api-shutdown` · `/deno-deploy-val-town-exit` · `/postgres-18-docker-upgrade` · `/n8n-3-migration`
+
+All of them come from one data file, `src/deadlines/data.ts` (dates, sources, copy, checker ids). A small Vite
+plugin (`build/deadline-pages.ts`) renders them to plain HTML at build time, each with its own title, meta
+description and canonical URL, and writes `sitemap.xml` and `robots.txt`; the dev server renders the same pages
+on request. The only script on those pages fills in the day counts, so they read fine without JavaScript.
+The dates were last re-read on the vendors' pages on 2026-11-13; when a vendor moves a date, change it in
+`data.ts` and rebuild.
+
 ## Stack
 
 TypeScript (strict), Vite, no UI framework. DOM is built with a small `h()` helper that only ever sets text, so
@@ -88,7 +105,9 @@ src/
   lib/            repo-input, github (REST + raw), select (what to read), loader, checks (the lazy checker registry),
                   path-shim (the node:path helpers the engines use, aliased in vite.config.ts)
   ui/             dom helpers, render, drop (folder drag and drop)
-  main.ts         wiring, URL state (?repo=owner/repo), progress
+  deadlines/      data.ts (every deadline and page), html.ts (renderers), time.ts (day counts), client.ts
+  main.ts         wiring, URL state (?repo=owner/repo, ?only=<checker ids>), progress
+build/            the Vite plugin that pre-renders the deadline pages, sitemap.xml and robots.txt
 test/             unit tests (fake fetch, in-memory repos)
 e2e/              Playwright against live public repos, plus a local sample folder
 ```
@@ -104,7 +123,7 @@ npm run check        # typecheck + unit tests + build + bundle budget (all JS un
 npm run build && npm run e2e   # end-to-end; CHROME_PATH=/path/to/chrome if it isn't /usr/bin/google-chrome
 ```
 
-The e2e tests call GitHub (2 API requests per repo, 6 repos), pinned to fixed commits:
+The scanner e2e tests call GitHub (2 API requests per repo), pinned to fixed commits (GitHub allows 60 anonymous requests an hour per IP):
 
 - `kpi-ua/schedule.kpi.ua@6d5e7ba14d`, the commit before its fix PR #631: `corepack enable` in `Dockerfile:5`.
 - `vercel/nextjs-subscription-payments@bdd0813206`: an `[inbucket]` section in `supabase/config.toml`.
@@ -114,6 +133,13 @@ The e2e tests call GitHub (2 API requests per repo, 6 repos), pinned to fixed co
 - `google-gemini/gemini-fullstack-langgraph-quickstart@e34e569de4` with `?only=gemini-25`: `gemini-2.5-flash` in
   `backend/src/agent/configuration.py:19`.
 - A repo that doesn't exist, and `e2e/fixtures/sample-app` as a local folder (no network at all).
+
+`e2e/pages.spec.ts` checks every deadline page (title, canonical, H1, scanner form), the day counts on
+`/deadlines` with a fixed clock, and the sitemap without any network; its `@network` tests start from each page's
+example link and scan one real repo per remaining engine (`--grep-invert @network` skips them):
+`father-bot/chatgpt_telegram_bot@3631d6534f` (gpt-4o), `assafelovic/gpt-researcher@ddd4db3620`
+(`retrievers/google/google.py:79`), `0f-0b/kv-relay@076195780d` (Deno KV, `main.ts:92`),
+`3Corners-Labs/OpenPlanner@b43dfb83eb` (`docker-compose.yml:245`), `enescingoz/awesome-n8n-templates@827110332c`.
 
 ### Updating the engines
 

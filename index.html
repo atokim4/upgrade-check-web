@@ -9,6 +9,7 @@
       content="Paste a public GitHub repo and see which 2026-27 shutdowns and upgrades hit it: GPT-4o, Claude Sonnet 4.5, Gemini 2.5, Prisma Accelerate, Google Custom Search, Deno Deploy, Val Town, Postgres 18, n8n 3.0, Node 26, Supabase. With the line and the fix. Runs in your browser."
     />
     <meta name="color-scheme" content="light dark" />
+    <link rel="canonical" href="https://upgrade-check-2026.netlify.app/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
@@ -22,18 +23,9 @@
           each line that the changes below break, why, and what to change.
         </p>
         <ul class="changes" aria-label="Changes it checks">
-          <li><time datetime="2026-10-28">Oct 28</time> Node.js 26 becomes LTS: no corepack, no Yarn in node:26 images</li>
-          <li><time datetime="2026-10-30">Oct 30</time> Supabase stops granting new tables to the Data API</li>
-          <li><time datetime="2026-11-02">Nov 2</time> Supabase CLI v3: removed commands, flags and config sections</li>
-          <li><time datetime="2026-11-12">Nov 12</time> PostgreSQL 14's final release; postgres:18 images moved the data directory</li>
-          <li><time datetime="2026-11-30">Nov 30</time> Claude Sonnet 4.5 retires on the Claude API</li>
-          <li><time datetime="2026-12-01">Dec 1</time> <span>Prisma Accelerate shuts down; <code>@supabase/server</code> adapters are removed; Gemini 2.5 Pro and Flash get routed to other models</span></li>
-          <li><time datetime="2026-12-10">Dec 10</time> Val Town goes read-only (off on Jan 10)</li>
-          <li><time datetime="2027-01-01">Jan 1</time> Google's Custom Search JSON API ends for existing customers</li>
-          <li><time datetime="2027-01-14">Jan 14</time> OpenAI shuts down GPT-4o and GPT-4.1</li>
-          <li><time datetime="2027-04">Apr 2027</time> Deno Deploy is sunset</li>
-          <li><span class="tbd">Not dated</span> n8n 3.0 removes nodes and expressions</li>
+          <!--dl:hero-->
         </ul>
+        <p class="changes-more"><a href="/deadlines">All dates with days left, sources and what each one breaks</a></p>
       </div>
     </header>
 
@@ -75,6 +67,8 @@
         <span>Everything runs in this tab. Files go from GitHub (or your disk) to your browser and nowhere else: no server, no analytics, no cookies.</span>
       </p>
 
+      <p id="only-note" class="only-note" hidden></p>
+
       <p id="rate" class="rate" aria-live="polite"></p>
 
       <section id="status" class="status" aria-live="polite" hidden>
@@ -85,24 +79,7 @@
       <section id="results" class="results" tabindex="-1" hidden></section>
     </main>
 
-    <footer class="colophon">
-      <div class="wrap">
-        <p>
-          A personal project by Sunnatulla E. The checks come from the open-source scanners
-          <a href="https://github.com/atokim4/supabase-cli-v3-upgrade">supabase-cli-v3-upgrade</a>,
-          <a href="https://github.com/atokim4/node26-lts-upgrade">node26-lts-upgrade</a>,
-          <a href="https://github.com/atokim4/vibe-preflight">vibe-preflight</a>,
-          <a href="https://github.com/atokim4/prisma-accelerate-exit">prisma-accelerate-exit</a>,
-          <a href="https://github.com/atokim4/llm-retire-scan">llm-retire-scan</a>,
-          <a href="https://github.com/atokim4/deno-exit">deno-exit</a>,
-          <a href="https://github.com/atokim4/pg18-upgrade-check">pg18-upgrade-check</a> and
-          <a href="https://github.com/atokim4/n8n-v3-check">n8n-v3-check</a>, bundled for the browser; the Gemini and
-          Custom Search rules live only on this page.
-          <a href="https://github.com/atokim4/upgrade-check-web">Source of this page</a> (MIT).
-        </p>
-        <p>Not affiliated with any of the companies or projects named here.</p>
-      </div>
-    </footer>
+    <!--dl:footer-->
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
