@@ -1,4 +1,4 @@
-import { GitHub } from "./github.ts";
+import { GitHub, GitHubError } from "./github.ts";
 import type { RepoRef } from "./repo-input.ts";
 import { LOCAL_LIMITS, planReads, type ReadPlan, type TreeEntry } from "./select.ts";
 
@@ -11,6 +11,8 @@ export interface LoadedRepo {
   plan: ReadPlan;
   /** The file list itself was cut short (GitHub's tree limit, or a dropped folder that was too big). */
   listTruncated: boolean;
+  /** Files in the read plan that couldn't be downloaded, even after a retry. */
+  unreadable: string[];
 }
 
 export type Progress = (done: number, total: number) => void;
@@ -31,15 +33,34 @@ async function readAll<T>(items: readonly T[], read: (item: T) => Promise<void>,
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, worker));
 }
 
+/** Above this share of failed downloads the scan stops: the report would say too little to be trusted. */
+const MAX_UNREADABLE = 0.2;
+
 export async function loadFromGitHub(ref: RepoRef, gh: GitHub, progress: Progress, signal?: AbortSignal): Promise<LoadedRepo> {
   const sha = await gh.resolve(ref);
   const tree = await gh.tree(ref, sha);
   const plan = planReads(tree.entries);
   const texts = new Map<string, string>();
+  const unreadable: string[] = [];
+  const fetchOne = (path: string) => gh.raw(ref, sha, path, signal);
   await readAll(plan.read, async (e) => {
-    texts.set(e.path, await gh.raw(ref, sha, e.path, signal));
+    // raw.githubusercontent.com sometimes answers one file with a 5xx: retry once, then leave that file out.
+    try {
+      texts.set(e.path, await fetchOne(e.path));
+    } catch (first) {
+      if (!(first instanceof GitHubError) || signal?.aborted) throw first;
+      try {
+        texts.set(e.path, await fetchOne(e.path));
+      } catch (err) {
+        if (!(err instanceof GitHubError)) throw err;
+        unreadable.push(e.path);
+      }
+    }
   }, progress);
-  return { name: ref.repo, source: { kind: "github", ref, sha }, paths: tree.entries.map((e) => e.path), texts, plan, listTruncated: tree.truncated };
+  if (unreadable.length > Math.max(1, plan.read.length * MAX_UNREADABLE)) {
+    throw new GitHubError("network", `${unreadable.length} of ${plan.read.length} files couldn't be downloaded from raw.githubusercontent.com.`);
+  }
+  return { name: ref.repo, source: { kind: "github", ref, sha }, paths: tree.entries.map((e) => e.path), texts, plan, listTruncated: tree.truncated, unreadable: unreadable.sort() };
 }
 
 /** A file from a folder picker or a drop, with its path inside the chosen folder. */
@@ -64,5 +85,5 @@ export async function loadFromFiles(name: string, all: readonly LocalFile[], pro
   await readAll(plan.read, async (e) => {
     texts.set(e.path, await byPath.get(e.path)!.text());
   }, progress);
-  return { name, source: { kind: "local" }, paths: entries.map((e) => e.path).sort(), texts, plan, listTruncated: truncated };
+  return { name, source: { kind: "local" }, paths: entries.map((e) => e.path).sort(), texts, plan, listTruncated: truncated, unreadable: [] };
 }

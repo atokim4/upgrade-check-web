@@ -38,10 +38,44 @@ function findingItem(repo: LoadedRepo, f: Finding): HTMLLIElement {
     "li",
     { class: `finding sev-${f.severity}` },
     h("div", { class: "finding-head" }, h("span", { class: "sev" }, SEVERITY_LABEL[f.severity]), h("h4", {}, richText(f.title))),
-    h("p", { class: "finding-where" }, location, h("span", { class: "rule" }, f.rule)),
+    h(
+      "p",
+      { class: "finding-where" },
+      location,
+      h("span", { class: "rule" }, f.rule),
+      f.approx && h("span", { class: "approx", title: "Found by a text pattern that stands in for the CLI's syntax-tree check. Worth a look; the CLI confirms it." }, "pattern match"),
+    ),
     f.snippet && h("pre", { class: "snippet" }, f.snippet.trim()),
     h("p", { class: "message" }, richText(f.message)),
     details,
+  );
+}
+
+/** The CLI's repo and version, or the official page for rules that live only here. */
+function sourceLink(c: CheckerReport): HTMLAnchorElement {
+  const text = c.version ? `${c.repoUrl.replace("https://github.com/", "")} ${c.version}` : "official notice";
+  return h("a", { href: c.repoUrl, target: "_blank", rel: "noopener" }, text);
+}
+
+/** Checkers that ran and found nothing, one line each. */
+function cleanList(clean: CheckerReport[]): HTMLElement {
+  return h(
+    "section",
+    { class: "clean-list", "aria-labelledby": "clean-heading" },
+    h("h3", { id: "clean-heading" }, icon(ICONS.check), `Checked, nothing breaks (${clean.length})`),
+    h(
+      "ul",
+      {},
+      ...clean.map((c) =>
+        h(
+          "li",
+          {},
+          h("span", { class: "clean-name" }, c.name),
+          h("span", { class: "clean-meta" }, `${plural(c.rulesChecked, "check")} · `, sourceLink(c)),
+          ...c.notes.map((n) => h("span", { class: "clean-note" }, n)),
+        ),
+      ),
+    ),
   );
 }
 
@@ -60,7 +94,10 @@ function checkerSection(repo: LoadedRepo, c: CheckerReport): HTMLElement {
 
   const tools = h("div", { class: "checker-tools" });
   if (c.patch) tools.append(copyButton("Copy all fixes as one patch", () => c.patch!, "btn"));
-  tools.append(h("p", { class: "cli" }, "Same checks on a local checkout: ", h("code", {}, c.cli), " ", copyButton("Copy", () => c.cli, "btn btn-small btn-quiet")));
+  if (c.cli) {
+    const { label, command } = c.cli;
+    tools.append(h("p", { class: "cli" }, `${label}: `, h("code", {}, command), " ", copyButton("Copy", () => command, "btn btn-small btn-quiet")));
+  }
 
   return h(
     "section",
@@ -69,7 +106,7 @@ function checkerSection(repo: LoadedRepo, c: CheckerReport): HTMLElement {
       "header",
       { class: "checker-head" },
       h("h3", { id: headingId }, c.name, h("span", { class: "count" }, count)),
-      h("p", { class: "about" }, c.about, " ", h("a", { href: c.repoUrl, target: "_blank", rel: "noopener" }, `${c.repoUrl.replace("https://github.com/", "")} ${c.version}`)),
+      h("p", { class: "about" }, c.about, " ", sourceLink(c)),
     ),
     ...body,
     tools,
@@ -81,14 +118,20 @@ function coverage(repo: LoadedRepo): HTMLElement {
   const left = Object.values(repo.plan.skipped).reduce((a, b) => a + b, 0);
   const parts = [`Read ${read} of the ${plural(repo.paths.length, "file")} in ${repo.source.kind === "github" ? "the repo" : "the folder"}`];
   if (repo.source.kind === "github") parts[0] += ` at ${repo.source.sha.slice(0, 7)}`;
-  let text = `${parts[0]}: CI, Docker, package and Supabase config files first, then SQL migrations and source code.`;
+  let text = `${parts[0]}: CI, Docker, package and framework config files first, then workflow JSON, SQL migrations and source code.`;
   if (left) text += ` ${plural(left, "file")} that a check could look at ${left === 1 ? "was" : "were"} left out to keep this quick (mostly source files); the CLI reads everything.`;
   if (repo.listTruncated) text += " The file list itself was cut short because the repository is very large.";
+  if (repo.unreadable.length) text += ` ${plural(repo.unreadable.length, "file")} couldn't be downloaded and ${repo.unreadable.length === 1 ? "was" : "were"} skipped: ${repo.unreadable.slice(0, 3).join(", ")}${repo.unreadable.length > 3 ? ", …" : ""}.`;
   return h("p", { class: "coverage" }, text);
 }
 
+const breaks = (c: CheckerReport) => c.findings.some((f) => f.severity !== "note");
+
 export function renderReport(target: HTMLElement, repo: LoadedRepo, report: Report): void {
   const all = report.checkers.flatMap((c) => c.findings);
+  // Checkers with something to change first, then the ones with notes only; clean ones collapse into one list.
+  const withFindings = report.checkers.filter((c) => c.findings.length).sort((a, b) => Number(breaks(b)) - Number(breaks(a)));
+  const clean = report.checkers.filter((c) => !c.findings.length);
   const breaking = all.filter((f) => f.severity !== "note");
   const errors = all.filter((f) => f.severity === "error").length;
   const fixable = breaking.filter((f) => f.diff).length;
@@ -113,7 +156,9 @@ export function renderReport(target: HTMLElement, repo: LoadedRepo, report: Repo
       h("p", {}, sub),
     ),
     coverage(repo),
-    ...report.checkers.sort((a, b) => Number(b.findings.some((f) => f.severity !== "note")) - Number(a.findings.some((f) => f.severity !== "note"))).map((c) => checkerSection(repo, c)),
+    ...withFindings.map((c) => checkerSection(repo, c)),
+    ...(clean.length ? [cleanList(clean)] : []),
+    ...(report.notUsed.length ? [h("p", { class: "not-used" }, `Not used in the files read, so not run: ${report.notUsed.map((c) => c.name).join(", ")}.`)] : []),
   );
 }
 
@@ -132,7 +177,13 @@ export function renderError(target: HTMLElement, view: ErrorView): void {
       h(
         "pre",
         { class: "snippet" },
-        "npx github:atokim4/supabase-cli-v3-upgrade .\nnpx github:atokim4/node26-lts-upgrade .\nnpx github:atokim4/vibe-preflight --only breaking .",
+        [
+          "npx github:atokim4/supabase-cli-v3-upgrade .",
+          "npx github:atokim4/node26-lts-upgrade .",
+          "npx github:atokim4/vibe-preflight --only breaking .",
+          "npx github:atokim4/prisma-accelerate-exit .",
+          "npx github:atokim4/deno-exit .",
+        ].join("\n"),
       ),
     );
   }

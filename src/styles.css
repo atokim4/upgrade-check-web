@@ -180,16 +180,20 @@ h1 {
 }
 .changes li {
   display: grid;
-  grid-template-columns: 4.5rem 1fr;
+  grid-template-columns: 5.5rem 1fr;
   gap: 0.75rem;
   padding: 0.55rem 0;
   border-bottom: 1px solid var(--rule);
   font-size: 0.95rem;
 }
-.changes time {
+.changes time,
+.changes .tbd {
   color: var(--signal);
   font-size: 0.85rem;
   padding-top: 0.1em;
+}
+.changes .tbd {
+  color: var(--ink-soft);
 }
 
 /* Intake */
@@ -745,4 +749,63 @@ pre {
     transition: none !important;
     animation: none !important;
   }
+}
+
+/* Detect-only engines: findings from a text pattern rather than a syntax tree. */
+.approx {
+  font: 400 0.75rem/1.4 var(--mono);
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-radius: 3px;
+  padding: 0 0.35rem;
+  cursor: help;
+}
+
+.clean-list {
+  margin: 0 0 1.5rem;
+  border-top: 1px solid var(--rule);
+  padding-top: 1rem;
+}
+.clean-list h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+  margin: 0 0 0.6rem;
+}
+.clean-list h3 .icon {
+  color: var(--ok);
+}
+.clean-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+.clean-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px dashed var(--rule);
+}
+.clean-name {
+  font-weight: 600;
+}
+.clean-meta {
+  font: 400 0.8rem/1.4 var(--mono);
+  color: var(--ink-soft);
+}
+.clean-note {
+  flex-basis: 100%;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+.not-used {
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+  margin: 0 0 2rem;
+  max-width: 72ch;
 }

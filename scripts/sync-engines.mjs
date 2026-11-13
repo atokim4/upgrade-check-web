@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Copies the browser-safe engine modules of the three scanners into src/engines/<id>/.
-// Usage: node scripts/sync-engines.mjs [<folder with the three checkouts>]
+// Copies the browser-safe engine modules of the scanners into src/engines/<id>/.
+// Usage: node scripts/sync-engines.mjs [<folder with the checkouts>]
 // Each checkout is found as <folder>/<repo name> or, by default, in the sibling pet folders this repo was built next to.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -10,11 +10,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "..", "src", "engines");
 const base = process.argv[2] ? resolve(process.argv[2]) : undefined;
 
-/** `src/` files that need Node (fs, git, CLI, Action, terminal reports); everything else is copied. */
+/**
+ * `skip`: `src/` entries that need Node (fs, git, CLI, Action, terminal reports); everything else is copied.
+ * `only`: copy just these entries (the detect-only engines: their fixers need ts-morph or the file system).
+ */
 const ENGINES = [
   { id: "supabase-cli-v3", repo: "supabase-cli-v3-upgrade", sibling: "../../../supabase-cli-v3-check/project", skip: ["cli.ts", "fs-repo.ts", "scan.ts", "action", "report"] },
   { id: "node26", repo: "node26-lts-upgrade", sibling: "../../../node26-lts-check/project", skip: ["cli.ts", "fs-repo.ts", "scan.ts", "action", "report"] },
   { id: "preflight", repo: "vibe-preflight", sibling: "../../../vibe-preflight-skill/project", skip: ["cli.ts", "project.ts", "scan.ts", "action", "report.ts", "sarif.ts", "summary.ts"] },
+  { id: "prisma", repo: "prisma-accelerate-exit", sibling: "../../../prisma-accelerate-exit/project", only: ["types.ts", "text-rules.ts"] },
+  { id: "llm", repo: "llm-retire-scan", sibling: "../../../openai-gpt4-retire/project", only: ["types.ts", "source.ts", "openai", "anthropic"] },
+  { id: "deno", repo: "deno-exit", sibling: "../../../deno-exit/project", only: ["types.ts", "apis.ts", "specifiers.ts", "deploy.ts"] },
+  { id: "pg18", repo: "pg18-upgrade-check", sibling: "../../../pg18-upgrade-check/project", only: ["model.ts", "image.ts", "rules.ts", "sources"] },
+  { id: "n8n", repo: "n8n-v3-check", sibling: "../../../n8n-v3-template-census/project", only: ["types.ts", "rules.ts", "check.ts"] },
 ];
 
 const versions = {};
@@ -25,7 +33,7 @@ for (const e of ENGINES) {
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
   for (const entry of readdirSync(join(root, "src"))) {
-    if (e.skip.includes(entry)) continue;
+    if (e.only ? !e.only.includes(entry) : e.skip.includes(entry)) continue;
     cpSync(join(root, "src", entry), join(dest, entry), { recursive: true });
   }
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));

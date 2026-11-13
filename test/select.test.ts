@@ -25,7 +25,7 @@ describe("tierOf", () => {
 describe("planReads", () => {
   it("reads config before source and stops at the file limit", () => {
     const tree = [
-      ...Array.from({ length: 80 }, (_, i) => entry(`src/components/c${i}.tsx`)),
+      ...Array.from({ length: 120 }, (_, i) => entry(`src/components/c${i}.tsx`)),
       entry("supabase/functions/api/index.ts"),
       entry(".github/workflows/ci.yml"),
       entry("package.json"),
@@ -34,7 +34,7 @@ describe("planReads", () => {
     expect(plan.read.slice(0, 2).map((e) => e.path)).toEqual([".github/workflows/ci.yml", "package.json"]);
     expect(plan.read[2]!.path).toBe("supabase/functions/api/index.ts");
     expect(plan.read).toHaveLength(GITHUB_LIMITS.files);
-    expect(plan.skipped.source).toBe(83 - GITHUB_LIMITS.files);
+    expect(plan.skipped.source).toBe(123 - GITHUB_LIMITS.files);
   });
 
   it("marks the SQL as incomplete when there are more migrations than the limit", () => {

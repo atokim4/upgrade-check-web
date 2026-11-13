@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Upgrade check: will the Nov-Dec 2026 upgrades break your repo?</title>
+    <title>Upgrade check: is your repo hit by a 2026-27 shutdown?</title>
     <meta
       name="description"
-      content="Paste a public GitHub repo and see what Supabase CLI v3, Node.js 26 LTS, the @supabase/server adapter removal and the Supabase grants change break in it, with the line and the fix. Runs in your browser."
+      content="Paste a public GitHub repo and see which 2026-27 shutdowns and upgrades hit it: GPT-4o, Claude Sonnet 4.5, Gemini 2.5, Prisma Accelerate, Google Custom Search, Deno Deploy, Val Town, Postgres 18, n8n 3.0, Node 26, Supabase. With the line and the fix. Runs in your browser."
     />
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -16,16 +16,23 @@
     <header class="masthead">
       <div class="wrap">
         <p class="brand"><svg aria-hidden="true" viewBox="0 0 24 24" class="brand-mark"><path d="M4 4h11l5 5v11H4z" /><path d="M8 13l3 3 5-6" /></svg> Upgrade check</p>
-        <h1>Will the Nov&ndash;Dec 2026 upgrades break your repo?</h1>
+        <h1>Is your repo hit by a 2026&ndash;27 shutdown?</h1>
         <p class="lede">
-          Paste a public GitHub repository. This page reads its CI, Docker, config and source files and shows each
-          line that breaks on the upgrades below, why, and the fix.
+          Paste a public GitHub repository. This page reads its CI, Docker, config, workflow and source files and shows
+          each line that the changes below break, why, and what to change.
         </p>
         <ul class="changes" aria-label="Changes it checks">
           <li><time datetime="2026-10-28">Oct 28</time> Node.js 26 becomes LTS: no corepack, no Yarn in node:26 images</li>
           <li><time datetime="2026-10-30">Oct 30</time> Supabase stops granting new tables to the Data API</li>
           <li><time datetime="2026-11-02">Nov 2</time> Supabase CLI v3: removed commands, flags and config sections</li>
-          <li><time datetime="2026-12-01">Dec 1</time> <span><code>@supabase/server</code> adapters are removed</span></li>
+          <li><time datetime="2026-11-12">Nov 12</time> PostgreSQL 14's final release; postgres:18 images moved the data directory</li>
+          <li><time datetime="2026-11-30">Nov 30</time> Claude Sonnet 4.5 retires on the Claude API</li>
+          <li><time datetime="2026-12-01">Dec 1</time> <span>Prisma Accelerate shuts down; <code>@supabase/server</code> adapters are removed; Gemini 2.5 Pro and Flash get routed to other models</span></li>
+          <li><time datetime="2026-12-10">Dec 10</time> Val Town goes read-only (off on Jan 10)</li>
+          <li><time datetime="2027-01-01">Jan 1</time> Google's Custom Search JSON API ends for existing customers</li>
+          <li><time datetime="2027-01-14">Jan 14</time> OpenAI shuts down GPT-4o and GPT-4.1</li>
+          <li><time datetime="2027-04">Apr 2027</time> Deno Deploy is sunset</li>
+          <li><span class="tbd">Not dated</span> n8n 3.0 removes nodes and expressions</li>
         </ul>
       </div>
     </header>
@@ -58,6 +65,7 @@
           <span>Try:</span>
           <button type="button" class="chip" data-example="vercel/nextjs-subscription-payments">vercel/nextjs-subscription-payments</button>
           <button type="button" class="chip" data-example="kpi-ua/schedule.kpi.ua@6d5e7ba14d">kpi-ua/schedule.kpi.ua@6d5e7ba14d</button>
+          <button type="button" class="chip" data-example="father-bot/chatgpt_telegram_bot">father-bot/chatgpt_telegram_bot</button>
         </p>
         <div class="drop-overlay" aria-hidden="true"><p>Drop the folder to check it</p></div>
       </form>
@@ -80,13 +88,19 @@
     <footer class="colophon">
       <div class="wrap">
         <p>
-          A personal project by Sunnatulla E. The checks are the open-source scanners
+          A personal project by Sunnatulla E. The checks come from the open-source scanners
           <a href="https://github.com/atokim4/supabase-cli-v3-upgrade">supabase-cli-v3-upgrade</a>,
-          <a href="https://github.com/atokim4/node26-lts-upgrade">node26-lts-upgrade</a> and
-          <a href="https://github.com/atokim4/vibe-preflight">vibe-preflight</a>, bundled for the browser.
+          <a href="https://github.com/atokim4/node26-lts-upgrade">node26-lts-upgrade</a>,
+          <a href="https://github.com/atokim4/vibe-preflight">vibe-preflight</a>,
+          <a href="https://github.com/atokim4/prisma-accelerate-exit">prisma-accelerate-exit</a>,
+          <a href="https://github.com/atokim4/llm-retire-scan">llm-retire-scan</a>,
+          <a href="https://github.com/atokim4/deno-exit">deno-exit</a>,
+          <a href="https://github.com/atokim4/pg18-upgrade-check">pg18-upgrade-check</a> and
+          <a href="https://github.com/atokim4/n8n-v3-check">n8n-v3-check</a>, bundled for the browser; the Gemini and
+          Custom Search rules live only on this page.
           <a href="https://github.com/atokim4/upgrade-check-web">Source of this page</a> (MIT).
         </p>
-        <p>Not affiliated with Supabase, GitHub or the Node.js project.</p>
+        <p>Not affiliated with any of the companies or projects named here.</p>
       </div>
     </footer>
     <script type="module" src="/src/main.ts"></script>

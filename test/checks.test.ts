@@ -20,11 +20,12 @@ function repoOf(files: Record<string, string>): LoadedRepo {
     texts: new Map(Object.entries(files)),
     plan: planReads(tree),
     listTruncated: false,
+    unreadable: [],
   };
 }
 
-describe("runChecks", () => {
-  const report = runChecks(repoOf(FILES), "2026-11-10");
+describe("runChecks", async () => {
+  const report = await runChecks(repoOf(FILES), "2026-11-10");
   const byId = Object.fromEntries(report.checkers.map((c) => [c.id, c]));
 
   it("finds the [inbucket] section and offers a patch for it", () => {
@@ -42,10 +43,10 @@ describe("runChecks", () => {
     expect(f!.diff).toMatch(/\+.*corepack@0\.36\.0/);
   });
 
-  it("finds the @supabase/server adapter import, a warning before 2026-12-01 and an error from it", () => {
+  it("finds the @supabase/server adapter import, a warning before 2026-12-01 and an error from it", async () => {
     const f = byId.preflight!.findings.find((x) => x.rule === "server-adapter-removed");
     expect(f).toMatchObject({ file: "src/api.ts", severity: "warning" });
-    const after = runChecks(repoOf(FILES), "2026-12-02").checkers.find((c) => c.id === "preflight")!;
+    const after = (await runChecks(repoOf(FILES), "2026-12-02")).checkers.find((c) => c.id === "preflight")!;
     expect(after.findings.find((x) => x.rule === "server-adapter-removed")?.severity).toBe("error");
   });
 
@@ -54,15 +55,15 @@ describe("runChecks", () => {
     expect(byId.preflight!.findings.every((f) => ["server-adapter-removed", "cron-job-direct-write", "grants-missing", "grant-leak", "grant-broad"].includes(f.rule))).toBe(true);
   });
 
-  it("reports a clean repo as clean", () => {
-    const clean = runChecks(repoOf({ "package.json": '{"name":"clean"}', "index.js": "console.log(1)\n" }), "2026-11-10");
+  it("reports a clean repo as clean", async () => {
+    const clean = await runChecks(repoOf({ "package.json": '{"name":"clean"}', "index.js": "console.log(1)\n" }), "2026-11-10");
     expect(clean.checkers.flatMap((c) => c.findings).filter((f) => f.severity !== "note")).toEqual([]);
     expect(clean.checkers.every((c) => c.patch === undefined)).toBe(true);
   });
 
-  it("switches the grants checks off when the SQL wasn't read in full", () => {
+  it("switches the grants checks off when the SQL wasn't read in full", async () => {
     const sql = Object.fromEntries(Array.from({ length: 41 }, (_, i) => [`supabase/migrations/${String(i).padStart(3, "0")}_t.sql`, `create table t${i} (id int);\n`]));
-    const pf = runChecks(repoOf({ ...FILES, ...sql }), "2026-11-10").checkers.find((c) => c.id === "preflight")!;
+    const pf = (await runChecks(repoOf({ ...FILES, ...sql }), "2026-11-10")).checkers.find((c) => c.id === "preflight")!;
     expect(pf.rulesChecked).toBe(2);
     expect(pf.notes.join(" ")).toMatch(/grants checks were skipped/);
   });

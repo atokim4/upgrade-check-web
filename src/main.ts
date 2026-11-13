@@ -2,7 +2,7 @@ import "@fontsource/ibm-plex-sans/latin-400.css";
 import "@fontsource/ibm-plex-sans/latin-600.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import "./styles.css";
-import { runChecks } from "./lib/checks.ts";
+import { CHECKERS, runChecks, type CheckerId } from "./lib/checks.ts";
 import { GitHub, GitHubError, type RateLimit } from "./lib/github.ts";
 import { loadFromFiles, loadFromGitHub, type LoadedRepo, type LocalFile } from "./lib/loader.ts";
 import { InputError, parseRepoInput, repoLabel, type RepoRef } from "./lib/repo-input.ts";
@@ -50,9 +50,15 @@ function onProgress(done: number, total: number): void {
   progress.value = done;
 }
 
-function show(repo: LoadedRepo): void {
+/** `?only=prisma,llm` limits a scan to some checkers (the deadline pages link to the scanner that way). */
+function onlyParam(): CheckerId[] {
+  const ids = new Set<string>(CHECKERS.map((c) => c.id));
+  return (new URLSearchParams(location.search).get("only") ?? "").split(",").filter((id): id is CheckerId => ids.has(id));
+}
+
+async function show(repo: LoadedRepo): Promise<void> {
   statusText.textContent = "Running the checks";
-  const report = runChecks(repo);
+  const report = await runChecks(repo, undefined, onlyParam());
   renderReport(results, repo, report);
   results.hidden = false;
   results.focus({ preventScroll: true });
@@ -101,7 +107,7 @@ async function checkRepo(raw: string): Promise<void> {
 
   setBusy(true, `Asking GitHub for ${repoLabel(ref)}`);
   try {
-    show(await loadFromGitHub(ref, gh, onProgress));
+    await show(await loadFromGitHub(ref, gh, onProgress));
   } catch (err) {
     renderError(results, errorView(err, ref));
     results.hidden = false;
@@ -118,7 +124,7 @@ async function checkFolder(name: string, files: LocalFile[], truncated: boolean)
   history.replaceState(null, "", url);
   setBusy(true, `Reading ${name}`);
   try {
-    show(await loadFromFiles(name, files, onProgress, truncated));
+    await show(await loadFromFiles(name, files, onProgress, truncated));
   } catch (err) {
     renderError(results, errorView(err));
     results.hidden = false;
