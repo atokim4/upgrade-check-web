@@ -23,6 +23,8 @@ const ENGINES = [
   { id: "deno", repo: "deno-exit", sibling: "../../../deno-exit/project", only: ["types.ts", "apis.ts", "specifiers.ts", "deploy.ts"] },
   { id: "pg18", repo: "pg18-upgrade-check", sibling: "../../../pg18-upgrade-check/project", only: ["model.ts", "image.ts", "rules.ts", "sources"] },
   { id: "n8n", repo: "n8n-v3-check", sibling: "../../../n8n-v3-template-census/project", only: ["types.ts", "rules.ts", "check.ts"] },
+  // `files`: single files below src/ (the static engine and the shell parser it imports; the rest of the tool needs Node).
+  { id: "eslint10", repo: "eslint10-parity", sibling: "../../../eslint10-parity/project", files: ["static/index.ts", "collector/shell.ts"] },
 ];
 
 const versions = {};
@@ -32,9 +34,16 @@ for (const e of ENGINES) {
   const dest = join(out, e.id);
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
-  for (const entry of readdirSync(join(root, "src"))) {
-    if (e.only ? !e.only.includes(entry) : e.skip.includes(entry)) continue;
-    cpSync(join(root, "src", entry), join(dest, entry), { recursive: true });
+  if (e.files) {
+    for (const file of e.files) {
+      mkdirSync(dirname(join(dest, file)), { recursive: true });
+      cpSync(join(root, "src", file), join(dest, file));
+    }
+  } else {
+    for (const entry of readdirSync(join(root, "src"))) {
+      if (e.only ? !e.only.includes(entry) : e.skip.includes(entry)) continue;
+      cpSync(join(root, "src", entry), join(dest, entry), { recursive: true });
+    }
   }
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   versions[e.id] = { repo: `atokim4/${e.repo}`, version: pkg.version };

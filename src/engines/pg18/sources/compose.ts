@@ -72,6 +72,25 @@ function readBuild(build: unknown, composeDir: string, snap: Snapshot): BuildInf
   return { image: info.from ? parseImage(info.from) : null, env: info.env, volumes: info.volumes.map((v) => v.path) };
 }
 
+const TEMPLATE_SUFFIXES = ['.example', '.sample', '.dist', '.template', '.default'];
+
+/**
+ * A gitignored env_file usually has a committed template next to it (`.env.example`, `env.example`...).
+ * People copy it as is, so its variables are the best guess for what the container gets.
+ */
+function findEnvTemplate(path: string, snap: Snapshot): { path: string; content: string } | null {
+  const dir = dirname(path);
+  const name = path.slice(dir === '' ? 0 : dir.length + 1);
+  const bare = name.replace(/^\./, '');
+  const candidates = TEMPLATE_SUFFIXES.flatMap((suffix) => [`${name}${suffix}`, `${bare}${suffix}`, `${suffix.slice(1)}${name.startsWith('.') ? name : `.${name}`}`]);
+  for (const candidate of new Set(candidates)) {
+    const full = joinPath(dir, candidate);
+    const content = snap.read(full);
+    if (content !== null) return { path: full, content };
+  }
+  return null;
+}
+
 /** Finds Postgres services in a docker compose file. */
 export function composeTargets(file: string, text: string, snap: Snapshot): PostgresTarget[] {
   const dir = dirname(file);
@@ -99,18 +118,26 @@ export function composeTargets(file: string, text: string, snap: Snapshot): Post
 
       const ownEnv = readEnvironment(raw.environment);
       const env = new Map([...(build?.env ?? []), ...ownEnv]);
-      let pgdataUnknown = false;
+      const missingEnvFiles: string[] = [];
+      const envTemplates: string[] = [];
       const envFiles = raw.env_file === undefined ? [] : Array.isArray(raw.env_file) ? raw.env_file : [raw.env_file];
       for (const ef of envFiles) {
         const path = asString(ef) ?? (isRecord(ef) ? asString(ef.path) : null);
         if (!path) continue;
-        const content = snap.read(joinPath(dir, path));
+        let content = snap.read(joinPath(dir, path));
         if (content === null) {
-          pgdataUnknown = true;
-          continue;
+          const template = findEnvTemplate(joinPath(dir, path), snap);
+          if (template === null) {
+            missingEnvFiles.push(joinPath(dir, path));
+            continue;
+          }
+          envTemplates.push(template.path);
+          content = template.content;
         }
         for (const [k, v] of parseDotenv(content)) if (!ownEnv.has(k)) env.set(k, v);
       }
+      // A missing env_file could set PGDATA, unless the service sets it itself.
+      const pgdataUnknown = missingEnvFiles.length > 0 && !ownEnv.has('PGDATA');
       const resolve = (v: string | undefined): string | null => (v === undefined ? null : interpolate(v, vars));
 
       const mounts = readMounts(raw, y, base, vars);
@@ -131,6 +158,8 @@ export function composeTargets(file: string, text: string, snap: Snapshot): Post
         line: y.lineOf([...base, raw.image === undefined ? 'build' : 'image']),
         pgdata: resolve(env.get('PGDATA')),
         pgdataUnknown,
+        ...(missingEnvFiles.length > 0 ? { missingEnvFiles } : {}),
+        ...(envTemplates.length > 0 ? { envTemplates } : {}),
         initdbArgs: resolve(env.get('POSTGRES_INITDB_ARGS')),
         mounts,
         ephemeral: false,

@@ -9,7 +9,7 @@
   },
   "preflight": {
     "repo": "atokim4/vibe-preflight",
-    "version": "1.6.1"
+    "version": "1.7.1"
   },
   "prisma": {
     "repo": "atokim4/prisma-accelerate-exit",
@@ -17,7 +17,7 @@
   },
   "llm": {
     "repo": "atokim4/llm-retire-scan",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "deno": {
     "repo": "atokim4/deno-exit",
@@ -29,6 +29,10 @@
   },
   "n8n": {
     "repo": "atokim4/n8n-v3-check",
+    "version": "0.1.0"
+  },
+  "eslint10": {
+    "repo": "atokim4/eslint10-parity",
     "version": "0.1.0"
   }
 }

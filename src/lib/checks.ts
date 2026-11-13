@@ -55,6 +55,12 @@ export const CHECKERS: readonly CheckerEntry[] = [
     load: () => import("../checkers/deno.ts"),
   },
   { id: "pg18", name: "Postgres 18 in Docker", uses: (r) => anyText(r, /postgres|postgis|pgvector|timescale/i), load: () => import("../checkers/pg18.ts") },
+  {
+    id: "eslint10",
+    name: "ESLint 10",
+    uses: (r) => anyPath(r, /(?:^|\/)(?:\.eslintrc(?:\.[a-z]+)?|eslint\.config\.[cm]?[jt]s|\.eslintignore)$/) || anyText(r, /"eslint"\s*:/, (p) => p.endsWith("package.json")),
+    load: () => import("../checkers/eslint10.ts"),
+  },
   { id: "n8n", name: "n8n 3.0 workflows", uses: (r) => anyText(r, /"(?:n8n-nodes-|@n8n\/)/, (p) => p.endsWith(".json")), load: () => import("../checkers/n8n.ts") },
 ];
 

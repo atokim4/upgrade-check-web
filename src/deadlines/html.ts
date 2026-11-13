@@ -138,7 +138,7 @@ export function renderPageMain(page: DeadlinePage): string {
   <section class="sources" aria-labelledby="sources-title">
     <h2 id="sources-title">Sources</h2>
     <ul>${sources}</ul>
-    <p>Dates and wording re-read on the official pages on <time datetime="${READ_ON}">${formatDay(READ_ON)}</time>. Vendors move dates; the official page wins.</p>
+    <p>Dates and wording re-read on the official pages on <time datetime="${page.readOn ?? READ_ON}">${formatDay(page.readOn ?? READ_ON)}</time>. Vendors move dates; the official page wins.</p>
   </section>
   <nav class="more" aria-labelledby="more-title">
     <h2 id="more-title">Other deadlines</h2>
@@ -149,10 +149,13 @@ export function renderPageMain(page: DeadlinePage): string {
 }
 
 export function renderSitemap(lastmod: string = READ_ON): string {
-  const urls = ["/", "/deadlines", ...PAGES.map((p) => `/${p.slug}`)];
+  const newest = [lastmod, ...PAGES.map((p) => p.readOn ?? lastmod)].sort().at(-1)!;
+  const urls: [string, string][] = [
+    ["/", newest], ["/deadlines", newest], ...PAGES.map((p): [string, string] => [`/${p.slug}`, p.readOn ?? lastmod]),
+  ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map((u) => `  <url><loc>${SITE}${u}</loc><lastmod>${lastmod}</lastmod></url>`).join("\n")}
+${urls.map(([u, day]) => `  <url><loc>${SITE}${u}</loc><lastmod>${day}</lastmod></url>`).join("\n")}
 </urlset>
 `;
 }

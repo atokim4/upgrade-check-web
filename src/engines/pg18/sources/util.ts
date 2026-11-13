@@ -33,6 +33,18 @@ export function parseYaml(text: string): YamlDoc[] {
     }));
 }
 
+/** The first YAML syntax error in the stream, or null when every document parses. */
+export function firstYamlError(text: string): { line: number; message: string } | null {
+  const lc = new LineCounter();
+  const docs = parseAllDocuments(text, { lineCounter: lc, uniqueKeys: false });
+  if (!Array.isArray(docs)) return null;
+  for (const d of docs) {
+    const e = d.errors[0];
+    if (e) return { line: e.linePos?.[0]?.line ?? lc.linePos(e.pos[0]).line, message: (e.message.split('\n')[0] ?? e.code).replace(/:\s*$/, '') };
+  }
+  return null;
+}
+
 export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }

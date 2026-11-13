@@ -10,7 +10,8 @@ export type CheckerId =
   | "google-cse"
   | "deno"
   | "pg18"
-  | "n8n";
+  | "n8n"
+  | "eslint10";
 
 export interface Finding {
   rule: string;

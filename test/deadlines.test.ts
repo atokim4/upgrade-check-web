@@ -49,6 +49,7 @@ describe("deadline data", () => {
     expect(PAGES.map((p) => p.slug).sort()).toEqual(
       [
         "gpt-4o-shutdown",
+        "gpt-5-o3-shutdown",
         "prisma-accelerate-shutdown",
         "claude-sonnet-4-5-retirement",
         "google-custom-search-api-shutdown",
@@ -56,6 +57,7 @@ describe("deadline data", () => {
         "gemini-2-5-shutdown",
         "postgres-18-docker-upgrade",
         "n8n-3-migration",
+        "eslint-10-upgrade",
       ].sort(),
     );
   });

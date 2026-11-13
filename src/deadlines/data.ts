@@ -34,6 +34,8 @@ export interface DeadlinePage {
   example: string;
   /** Official pages for facts beyond the deadline's own source. */
   moreSources?: Source[];
+  /** When this page's own sources were last re-read, if later than `READ_ON`. */
+  readOn?: string;
 }
 
 export interface Deadline {
@@ -64,6 +66,7 @@ export const CHECKER_NAMES: Record<CheckerId, string> = {
   deno: "Deno Deploy and Val Town",
   pg18: "Postgres 18 in Docker",
   n8n: "n8n 3.0 workflows",
+  eslint10: "ESLint 10",
 };
 
 export const DEADLINES: readonly Deadline[] = [
@@ -149,6 +152,18 @@ export const DEADLINES: readonly Deadline[] = [
     page: "gemini-2-5-shutdown",
   },
   {
+    id: "gpt-image-1-5",
+    name: "GPT Image 1.5 and 1 mini shut down",
+    what: "gpt-image-1.5, gpt-image-1-mini and chatgpt-image-latest stop; gpt-image-2.6-sunburst or -flare replace them.",
+    date: "2026-12-01",
+    source: {
+      url: "https://developers.openai.com/api/docs/deprecations",
+      label: "OpenAI deprecations page",
+    },
+    checkers: ["llm"],
+    page: "gpt-5-o3-shutdown",
+  },
+  {
     id: "supabase-server-adapters",
     name: "@supabase/server adapters removed",
     what: "The framework adapters are removed from the package.",
@@ -170,6 +185,18 @@ export const DEADLINES: readonly Deadline[] = [
     },
     checkers: ["deno"],
     page: "deno-deploy-val-town-exit",
+  },
+  {
+    id: "gpt-5-o3",
+    name: "GPT-5 and o3 shut down",
+    what: "gpt-5, gpt-5-mini, gpt-5-nano, gpt-5-pro, o3 and o3-pro stop; gpt-6.1-sol, gpt-6.1-terra and gpt-6-luna replace them.",
+    date: "2026-12-11",
+    source: {
+      url: "https://developers.openai.com/api/docs/deprecations",
+      label: "OpenAI deprecations page",
+    },
+    checkers: ["llm"],
+    page: "gpt-5-o3-shutdown",
   },
   {
     id: "google-cse",
@@ -218,6 +245,15 @@ export const DEADLINES: readonly Deadline[] = [
     page: "deno-deploy-val-town-exit",
   },
   {
+    id: "eslint-9-eol",
+    name: "ESLint 9 end of life",
+    what: "ESLint 9 gets no more fixes; ESLint 10 drops eslintrc and changes config lookup.",
+    date: "2026-08-06",
+    source: { url: "https://eslint.org/version-support/", label: "ESLint version support" },
+    checkers: ["eslint10"],
+    page: "eslint-10-upgrade",
+  },
+  {
     id: "n8n-3",
     name: "n8n 3.0",
     what: "Removed nodes and expression helpers; 3.0.0 is in early access with no release date.",
@@ -232,6 +268,37 @@ export const DEADLINES: readonly Deadline[] = [
 ];
 
 export const PAGES: readonly DeadlinePage[] = [
+  {
+    slug: "gpt-5-o3-shutdown",
+    title: "GPT-5 and o3 shut down on December 11, 2026",
+    description:
+      "OpenAI shuts down gpt-5, gpt-5-mini, gpt-5-nano, o3 and their pro models on Dec 11, 2026. What the GPT-6 swap breaks, and a repo scanner.",
+    h1: "GPT-5 and o3 shut down on December 11, 2026",
+    crumb: "GPT-5 and o3",
+    intro: [
+      "OpenAI's deprecations page lists December 11, 2026 as the shutdown date for <code>gpt-5</code>, <code>gpt-5-mini</code>, <code>gpt-5-nano</code>, <code>gpt-5-pro</code>, <code>o3</code> and <code>o3-pro</code>, with their dated snapshots. Each one gets its own replacement: <code>gpt-6.1-sol</code> for gpt-5 and o3, <code>gpt-6.1-terra</code> for gpt-5-mini, <code>gpt-6-luna</code> for gpt-5-nano. The two pro models become <code>gpt-6.1-sol</code> with <code>reasoning.mode: \"pro\"</code>, in the Responses API only. Ten days earlier, on December 1, <code>gpt-image-1.5</code>, <code>gpt-image-1-mini</code> and <code>chatgpt-image-latest</code> go too.",
+    ],
+    breaks: [
+      "The new models don't take the same requests. On <code>gpt-6.1-sol</code> and <code>gpt-6.1-terra</code>, tool calling needs the Responses API, so a Chat Completions call that sends <code>tools</code> fails after a plain swap. <code>gpt-6.1-sol</code> has no <code>none</code> effort, which means <code>temperature</code> and <code>top_p</code> have to go. No GPT-6 model lists <code>minimal</code> effort.",
+      "<code>gpt-5.1</code>, <code>gpt-5.2</code> and the GPT-5.6 models are not on this list, so the scanner matches IDs whole and leaves them alone (gpt-5.1 has its own date, April 1, 2027).",
+    ],
+    fix: [
+      "Swap the ID where the call has no tools on Chat Completions and no sampling settings. Move tool calls to Responses, and replace <code>minimal</code> with <code>low</code> as OpenAI's migration guide suggests. For the image models pick Sunburst for detailed work or Flare for fast iteration, on the Image API.",
+    ],
+    moreSources: [
+      {
+        url: "https://developers.openai.com/api/docs/guides/latest-model",
+        label: "OpenAI latest-model guide",
+      },
+      {
+        url: "https://developers.openai.com/api/docs/guides/reasoning",
+        label: "OpenAI reasoning guide",
+      },
+    ],
+    scans: "OpenAI model IDs that shut down, and calls that break on gpt-6.1-sol, gpt-6.1-terra or gpt-6-luna (tools, sampling, effort, pro mode).",
+    example: "pixeltable/pixelagent@b862c3eaae1b",
+    readOn: "2026-11-14",
+  },
   {
     slug: "gpt-4o-shutdown",
     title: "GPT-4o and GPT-4.1 shut down on January 14, 2027",
@@ -396,6 +463,31 @@ export const PAGES: readonly DeadlinePage[] = [
         url: "https://www.postgresql.org/docs/18/release-18.html",
         label: "PostgreSQL 18 release notes",
       },
+    ],
+  },
+  {
+    slug: "eslint-10-upgrade",
+    title: "ESLint 10 upgrade: what breaks after the version bump",
+    description:
+      "ESLint 9 reached end of life on August 6, 2026. What stops ESLint 10 from linting anything after a bump PR, and a file scanner for your repo.",
+    h1: "ESLint 10: what breaks when the bump PR lands",
+    crumb: "ESLint 10",
+    intro: [
+      "ESLint 9 reached end of life on August 6, 2026, so Renovate and Dependabot are opening ESLint 10 pull requests everywhere. There is no new deadline here: if one of these breaks your lint, it is broken already, and the question is whether your CI tells you.",
+    ],
+    breaks: [
+      "ESLint 10 reads only <code>eslint.config.*</code>, so an <code>.eslintrc</code> repo stops with \"Could not find config file\". It also no longer installs <code>@eslint/js</code>, <code>@eslint/eslintrc</code> or <code>globals</code> for you, so a config that imports them without declaring them fails to load. Custom parsers must provide <code>addGlobals()</code> (@babel/eslint-parser 7 does not), typescript-eslint before 8.54 extends a class that was removed, and plugins that read <code>context.parserOptions</code> crash, eslint-plugin-import 2.32.0 among them.",
+      "I checked 68 open ESLint 10 bump pull requests in public repos by hand: 45 of them lint zero files after the bump, and 7 of those 45 showed no failed check on the PR.",
+    ],
+    fix: [
+      "Declare every package your config imports. Port eslintrc with <code>npx @eslint/migrate-config</code> and review the result. Upgrade typescript-eslint to 8.56 or newer, and keep ESLint 9 where a parser or plugin has no ESLint 10 release yet, or switch it (eslint-plugin-import-x). Then compare a real ESLint 9 and 10 run of the same code with the CLI linked below.",
+    ],
+    scans:
+      "eslintrc-only configs, undeclared @eslint/js, @eslint/eslintrc and globals imports, old typescript-eslint, .eslintignore, eslint-env comments, removed CLI flags and Node versions ESLint 10 does not support.",
+    example: "aggre/ullr@e51828561fc4",
+    moreSources: [
+      { url: "https://eslint.org/docs/latest/use/migrate-to-10.0.0", label: "ESLint v10 migration guide" },
+      { url: "https://typescript-eslint.io/users/dependency-versions", label: "typescript-eslint dependency versions" },
     ],
   },
   {

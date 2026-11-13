@@ -10,6 +10,8 @@ export interface Finding {
   message: string;
   /** True when `--fix` rewrites this spot. */
   fixable?: boolean;
+  /** The model behind this finding shuts down within 30 days, or already has. */
+  urgent?: boolean;
 }
 
 /** A text replacement in one file: characters [start, end) become `text`. */

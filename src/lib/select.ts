@@ -51,6 +51,7 @@ const EXTRA_CONFIG = [
   /(?:^|\/)\.env\.(?:example|sample|template|dist)$/i,
   /(?:^|\/)(?:config|settings|models?|llm|agents?|litellm[^/]*)\.(?:ya?ml|toml|ini|cfg)$/i,
   /(?:^|\/)(?:pyproject\.toml|requirements[^/]*\.txt)$/,
+  /(?:^|\/)(?:\.eslintrc(?:\.(?:js|cjs|mjs|json|ya?ml))?|eslint\.config\.[cm]?[jt]s|\.eslintignore)$/,
 ];
 const PYTHON = /\.py$/;
 /** JSON that is never an n8n workflow. */

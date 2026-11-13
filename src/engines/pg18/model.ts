@@ -12,6 +12,8 @@ export interface Mount {
   /** Data survives a container being recreated (named volume, bind mount, PVC, host path). */
   persistent: boolean;
   line: number;
+  /** Set when the mount is declared in another file than the target (a Helm chart template). */
+  file?: string;
 }
 
 /** One Postgres container definition found in a file. */
@@ -26,6 +28,10 @@ export interface PostgresTarget {
   pgdata: string | null;
   /** PGDATA may come from somewhere we cannot read (missing env_file, envFrom, chart templates). */
   pgdataUnknown: boolean;
+  /** env_file entries that are not in the repo (usually a gitignored `.env`). */
+  missingEnvFiles?: string[];
+  /** Committed templates (`.env.example`...) read in place of a missing env_file. */
+  envTemplates?: string[];
   initdbArgs: string | null;
   mounts: Mount[];
   /** CI service containers start from scratch every run. */
@@ -51,9 +57,20 @@ export interface Finding {
   fix: string[];
 }
 
+/** A file that looked relevant but could not be read in full. */
+export interface FileProblem {
+  file: string;
+  line: number;
+  message: string;
+}
+
 export interface ScanResult {
   root: string;
   filesScanned: number;
+  /** Files (or YAML documents in them) skipped because they did not parse. */
+  unreadable: FileProblem[];
+  /** Helm chart templates (Go-template YAML): read as text for mounts and PGDATA, not parsed. */
+  helmTemplates: number;
   targets: PostgresTarget[];
   findings: Finding[];
 }

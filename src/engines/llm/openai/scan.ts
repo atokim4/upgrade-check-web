@@ -5,12 +5,31 @@ import {
 } from "../source.ts";
 import type { Edit, Finding, Severity } from "../types.ts";
 import {
-  LUNA, NEEDS_NONE_FOR_CHAT_TOOLS, RESPONSES_ONLY_TOOLS, noticeFor, parseModelId,
+  type OpenAINotice, SOL_61, SOON_DAYS, TARGETS, type TargetRules, URGENT_DAYS, daysUntil, noticeFor, parseModelId,
+  stripPrefix, todayUtc, whenText,
 } from "./models.ts";
 
 export interface OpenAIScan {
   findings: Finding[];
   edits: Edit[];
+  /**
+   * Defaults set in another file ("<file>:<line>") that a call here can't take as swapped: the directory scan
+   * keeps --fix away from those lines.
+   */
+  holds: string[];
+  /** Inserts that are valid only next to an ID swap: re-checked by `settle` whenever swaps are dropped. */
+  links: Link[];
+}
+
+/**
+ * An edit that only makes sense together with an ID swap inside `needs` (e.g. `reasoning_effort: "none"` for
+ * gpt-6-luna). `pair`: an edit that must go with it (the pro-mode swap and its `reasoning.mode` insert).
+ */
+export interface Link {
+  edit: Edit;
+  needs: [number, number][];
+  findings: Finding[];
+  pair?: Edit;
 }
 
 const PY = new Set([".py"]);
@@ -35,48 +54,61 @@ export function fileKind(file: string): FileKind {
 
 /** Characters a model ID can be made of, including `openai/` prefixes and `ft:` fine-tune names. */
 const TOKEN = /[A-Za-z0-9_.:/-]+/g;
-/** Two words in a row: the string is a sentence (a log line, a help text), not a model setting. */
-const PROSE = /[A-Za-z]{2,}["'.:;)]*[ \t]+["'(]*[A-Za-z]{2,}/;
+/**
+ * The string is a sentence (a log line, a help text), not a model setting: two words in a row, a word before a
+ * quoted name (`Order 'o1' (pending)`), or a short o-series name between words (`use o3 here`).
+ */
+const PROSE = /[A-Za-z]{2,}["'.:;)]*[ \t]+["'(]*[A-Za-z]{2,}|[A-Za-z]{3,}[ \t]+["']|[A-Za-z]{2,}[ \t]+o\d[ \t]+[A-Za-z]{2,}/;
 const MODEL_LIKE = /^[\w./:-]+$/;
 const CONFIG_COMMENT = /^\s*(?:#|;|\/\/)/;
 const QUOTED = /(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
 
 /**
  * Model defaults found anywhere in the repo, by lower-cased variable / env / config key name
- * (`default_model`, `openai_model`), pointing at where they are set.
+ * (`default_model`, `openai_model`), pointing at where they are set: one "<file>:<line> sets <name> to <id>" line per
+ * definition.
  */
 export type RepoDefaults = ReadonlyMap<string, string>;
 
 const DEFAULT_ASSIGN =
-  /^[ \t]*(?:export\s+)?(?:(?:const|let|var|readonly|static|private|public)\s+)*(?:self\.|this\.)?["']?([A-Za-z_$][\w$]*)["']?\s*(?::[^=\n]*)?[=:][^\n]*?["']?((?:openai\/)?gpt-4[\w.-]*)["']?/gm;
+  /^[ \t]*(?:export\s+)?(?:(?:const|let|var|readonly|static|private|public)\s+)*(?:self\.|this\.)?["']?([A-Za-z_$][\w$]*)["']?\s*(?::[^=\n]*)?[=:][^\n]*?["']?((?:openai\/)?(?:gpt-[45]|o3)[\w.-]*)["']?/gm;
 
 /** Names too common to link across files unless they are a class field (`model: str = "gpt-4o"`). */
 const GENERIC_NAMES = new Set(["model", "model_name", "modelname", "model_id", "modelid", "llm_model"]);
-const CLASS_FIELD = /^[ \t]+([A-Za-z_]\w*)\s*:\s*[A-Za-z_][\w.[\], |]*=\s*(?:Field\(\s*(?:default\s*=\s*)?)?["']((?:openai\/)?gpt-4[\w.-]*)["']\s*\)?\s*(?:#[^\n]*)?$/gm;
+const CLASS_FIELD = /^[ \t]+([A-Za-z_]\w*)\s*:\s*[A-Za-z_][\w.[\], |]*=\s*(?:Field\(\s*(?:default\s*=\s*)?)?["']((?:openai\/)?(?:gpt-[45]|o3)[\w.-]*)["']\s*\)?\s*(?:#[^\n]*)?$/gm;
 
 /** Records `<name with "model"> = "gpt-4o-mini"`-style defaults in one file, for `RepoDefaults`. */
 export function collectDefaults(file: string, text: string, into: Map<string, string>): void {
   const kind = fileKind(file);
   if (kind === "skip") return;
   const record = (key: string, name: string, id: string, at: number) => {
-    if (!into.has(key)) into.set(key, `${file}:${lineOf(text, at)} sets ${name} to ${id}`);
+    // Every definition counts: a call may import the one in another file, so all of them are held together.
+    const where = `${file}:${lineOf(text, at)} sets ${name} to ${id}`;
+    const known = into.get(key);
+    if (!known?.split("\n").includes(where)) into.set(key, known ? `${known}\n${where}` : where);
   };
   for (const m of text.matchAll(DEFAULT_ASSIGN)) {
     const name = m[1]!;
     const key = name.toLowerCase();
-    if (!/model/i.test(name) || GENERIC_NAMES.has(key) || classify(m[2]!) !== "swap") continue;
+    if (!/model/i.test(name) || GENERIC_NAMES.has(key) || !retiring(m[2]!)) continue;
     record(key, name, m[2]!, m.index);
   }
   if (kind !== "py") return;
   for (const m of text.matchAll(CLASS_FIELD)) {
     const name = m[1]!;
-    if (/model/i.test(name) && classify(m[2]!) === "swap") record(`.${name.toLowerCase()}`, name, m[2]!, m.index);
+    if (/model/i.test(name) && retiring(m[2]!)) record(`.${name.toLowerCase()}`, name, m[2]!, m.index);
   }
 }
 
-export function scanOpenAI(file: string, text: string, defaults: RepoDefaults = new Map()): OpenAIScan {
+/**
+ * Scans one file. `today` (YYYY-MM-DD) sets how close each shutdown is: within 30 days (or past) is urgent,
+ * more than 90 days out is a warning.
+ */
+export function scanOpenAI(
+  file: string, text: string, defaults: RepoDefaults = new Map(), today: string = todayUtc(),
+): OpenAIScan {
   const kind = fileKind(file);
-  const out: OpenAIScan = { findings: [], edits: [] };
+  const out: OpenAIScan = { findings: [], edits: [], holds: [], links: [] };
   if (kind === "skip") return out;
 
   if (kind === "py" || kind === "js") {
@@ -85,10 +117,10 @@ export function scanOpenAI(file: string, text: string, defaults: RepoDefaults = 
       if (literal.block || !isSetting(text, literal.start, literal.end, literal.value) || inPrefixList(src, literal.start)) {
         continue;
       }
-      collectIds(file, text, literal.start + literal.quote.length, literal.value, out,
+      collectIds(file, text, literal.start + literal.quote.length, literal.value, out, today,
         literalBlocker(src, literal.start, literal.end));
     }
-    analyzeCallSites(file, src, out, defaults);
+    analyzeCallSites(file, src, out, defaults, today);
   } else {
     const json = extname(file).toLowerCase() === ".json";
     let offset = 0;
@@ -98,7 +130,7 @@ export function scanOpenAI(file: string, text: string, defaults: RepoDefaults = 
           const value = /[:=](.*)$/.exec(line)?.[1] ?? line;
           if (!PROSE.test(value.replace(/["']/g, ""))) {
             const first = [...line.matchAll(TOKEN)].find((m) => classify(m[0].replace(/[.:]+$/, "")) !== null);
-            collectIds(file, text, offset, line, out, first ? lineBlocker(line, first[0].replace(/[.:]+$/, "")) : null);
+            collectIds(file, text, offset, line, out, today, first ? lineBlocker(line, first[0].replace(/[.:]+$/, "")) : null);
           }
         } else {
           for (const m of line.matchAll(QUOTED)) {
@@ -106,14 +138,67 @@ export function scanOpenAI(file: string, text: string, defaults: RepoDefaults = 
             if (!isSetting(text, start, start + m[0].length, m[2]!)) continue;
             const key = /^\s*:/.test(line.slice(m.index + m[0].length)) ? "key" : null;
             // `{"model": "gpt-4o", "fallbacks": ["gpt-4o-mini"]}` on one line: swapping both makes them equal.
-            collectIds(file, text, start + 1, m[2]!, out, key ?? bracketBlocker(line, m.index) ?? valuesBlocker(line));
+            collectIds(file, text, start + 1, m[2]!, out, today, key ?? bracketBlocker(line, m.index) ?? valuesBlocker(line));
           }
         }
       }
       offset += line.length + 1;
     }
   }
-  return dropIgnored(text, out);
+  const kept = dropIgnored(text, out);
+  return { ...kept, edits: settle(text, kept.edits, kept.findings, kept.links) };
+}
+
+const isSwap = (e: Edit) => TARGETS.has(e.text);
+
+/**
+ * Final pass over a file's edits, run again after the directory scan drops held lines:
+ * - several calls spreading one options dict insert the same setting: keep one; inserts that disagree
+ *   (a chat call and a Responses call sharing the dict) drop everything on that dict;
+ * - an insert whose ID swap didn't survive (held, ignored, vetoed) goes, and its findings are no longer fixable.
+ */
+export function settle(text: string, edits: readonly Edit[], findings: Finding[], links: readonly Link[]): Edit[] {
+  let kept = [...edits];
+  const seen = new Map<number, string>();
+  const clash = new Set<number>();
+  kept = kept.filter((e) => {
+    if (e.start !== e.end) return true;
+    const before = seen.get(e.start);
+    if (before === undefined) {
+      seen.set(e.start, e.text);
+      return true;
+    }
+    if (before !== e.text) clash.add(e.start);
+    return false;
+  });
+  for (const link of links) {
+    if (!clash.has(link.edit.start)) continue;
+    kept = kept.filter((e) => !(isSwap(e) && link.needs.some(([from, to]) => e.start >= from && e.end <= to)));
+    markHeld(text, findings, link.needs,
+      " --fix leaves it: calls on different APIs share these options and would need different settings.");
+  }
+  const same = (a: Edit, b: Edit) => a.start === b.start && a.end === b.end && a.text === b.text;
+  for (const link of links) {
+    if (kept.some((e) => isSwap(e) && link.needs.some(([from, to]) => e.start >= from && e.end <= to))) continue;
+    kept = kept.filter((e) => !same(e, link.edit) && !(link.pair && same(e, link.pair)));
+    for (const f of link.findings) {
+      if (!f.fixable) continue;
+      f.fixable = false;
+      f.message += " --fix leaves it: the model ID this call uses stays as it is (see the shutdown finding).";
+    }
+  }
+  return kept;
+}
+
+/** Marks the fixable shutdown findings on the lines of `spans` as held. */
+function markHeld(text: string, findings: Finding[], spans: [number, number][], note: string): void {
+  const lines = new Set(spans.flatMap(([from, to]) => [lineOf(text, from), lineOf(text, Math.max(from, to - 1))]));
+  for (const f of findings) {
+    if (f.fixable && f.rule === "shutdown" && lines.has(f.line)) {
+      f.fixable = false;
+      f.message += note;
+    }
+  }
 }
 
 /** Matching code tests a model name (`startswith("gpt-4o")`, `"gpt-4o" in name`); it doesn't send one. */
@@ -133,19 +218,25 @@ function isSetting(text: string, start: number, end: number, value: string): boo
 const IGNORE = "llm-retire-scan: ignore";
 
 /** Drops findings and edits on a line that carries, or follows a line that carries, the ignore comment. */
+/** Whether 1-based `line` carries, or follows a comment line that carries, the ignore comment. */
+function ignoredLine(lines: readonly string[], line: number): boolean {
+  const above = lines[line - 2] ?? "";
+  return Boolean(lines[line - 1]?.includes(IGNORE)) ||
+    (/^\s*(?:#|\/\/|\/\*|\*|<!--)/.test(above) && above.includes(IGNORE));
+}
+
 function dropIgnored(text: string, out: OpenAIScan): OpenAIScan {
   const lines = text.split("\n");
-  const commentOnly = (text = "") => /^\s*(?:#|\/\/|\/\*|\*|<!--)/.test(text) && text.includes(IGNORE);
-  const ignored = (line: number) => lines[line - 1]?.includes(IGNORE) || commentOnly(lines[line - 2]);
+  const ignored = (line: number) => ignoredLine(lines, line);
   const findings = out.findings.filter((f) => !ignored(f.line)).sort((a, b) => a.line - b.line);
-  if (!text.includes(IGNORE)) return { findings, edits: out.edits };
-  return { findings, edits: out.edits.filter((e) => !ignored(lineOf(text, e.start))) };
+  if (!text.includes(IGNORE)) return { ...out, findings };
+  return { ...out, findings, edits: out.edits.filter((e) => !ignored(lineOf(text, e.start))) };
 }
 
 type FixBlocker = "key" | "list" | null;
 
 const BLOCKER_NOTE: Record<"key" | "list", string> = {
-  key: " It is a key (a price or limit table?): add a gpt-6-luna entry by hand; --fix leaves it.",
+  key: " It is a key (a price or limit table?): add an entry for the replacement by hand; --fix leaves it.",
   list: " It sits in a list of several models: --fix leaves it so the list doesn't end up with duplicates.",
 };
 
@@ -195,7 +286,8 @@ function bracketBlocker(line: string, at: number): FixBlocker {
 }
 
 function collectIds(
-  file: string, text: string, offset: number, chunk: string, out: OpenAIScan, blocker: FixBlocker = null,
+  file: string, text: string, offset: number, chunk: string, out: OpenAIScan, today: string,
+  blocker: FixBlocker = null,
 ): void {
   for (const match of chunk.matchAll(TOKEN)) {
     const raw = match[0].replace(/[.:]+$/, "");
@@ -203,9 +295,15 @@ function collectIds(
     if (!parsed) continue;
     const notice = noticeFor(parsed.base)!;
     const at = offset + match.index;
-    const line = lineOf(text, at);
+    if (SHORT_ID.test(parsed.base) && !parsed.prefix && !shortIdIsModel(text, at, chunk, raw)) continue;
+    const days = daysUntil(notice.date, today);
+    const urgent = days <= URGENT_DAYS;
+    const when = notice.group === "retired"
+      ? `was shut down on ${notice.date}`
+      : `shuts down on ${notice.date} (${whenText(days)})`;
     const finding = (rule: string, message: string, fixable = false): Finding => ({
-      file, line, provider: "openai", rule, severity: "error", message, fixable,
+      file, line: lineOf(text, at), provider: "openai", rule, message, fixable, urgent,
+      severity: notice.group !== "retired" && days > SOON_DAYS ? "warn" : "error",
     });
 
     if (parsed.fineTune) {
@@ -213,31 +311,108 @@ function collectIds(
         `${raw} is a fine-tune of ${parsed.base}; it stops with its base model on ${notice.date}. ` +
         `${notice.replacement} has no fine-tuning endpoint, so there is no drop-in ID to swap in.`));
     } else if (notice.group === "text") {
-      const lineBlock = blocker;
+      // `openai:gpt-5` is a pydantic-ai / LangChain model string: tools and settings are registered elsewhere
+      // (`@agent.tool`, `model_settings`), out of this tool's sight, so the ID is never swapped there.
+      const framework = parsed.prefix === "openai:"
+        ? " It is a pydantic-ai / LangChain model string: tools and model settings are set elsewhere, so check them " +
+          "against the replacement and swap it by hand; --fix leaves it."
+        : "";
+      const hold = blocker !== null || framework !== "";
       out.findings.push(finding("shutdown",
-        `${raw} shuts down on ${notice.date}. Replacement: ${notice.replacement}, a reasoning model ` +
-        `(default reasoning effort: medium).${lineBlock ? BLOCKER_NOTE[lineBlock] : ""}`, !lineBlock));
-      if (!lineBlock) {
+        `${raw} ${when}. Replacement: ${notice.replacement}, ${targetSummary(notice)}.` +
+        `${blocker ? BLOCKER_NOTE[blocker] : ""}${framework}`, !hold));
+      if (!hold) {
         const start = at + parsed.prefix.length;
-        out.edits.push({ start, end: start + parsed.base.length, text: LUNA });
+        out.edits.push({ start, end: start + parsed.base.length, text: notice.replacement });
       }
+    } else if (notice.group === "pro") {
+      out.findings.push(finding("shutdown",
+        `${raw} ${when}. Replacement: ${SOL_61} with reasoning.mode "pro", which OpenAI documents for the Responses ` +
+        `API only. A plain ID swap would drop pro mode, so --fix changes it only inside a Responses call it can finish.`));
+    } else if (notice.group === "image") {
+      out.findings.push(finding("image-shutdown",
+        `${raw} ${when}. Replacement: ${notice.replacement} (Sunburst for detailed work, Flare for fast iteration), ` +
+        "on the Image API (images.generate / images.edit; their model pages list Responses as not supported). " +
+        'Leaving out the new complexity setting means "high". Pick one by hand; --fix leaves image IDs.'));
     } else if (notice.group === "audio") {
       out.findings.push(finding("audio-shutdown",
-        `${raw} shuts down on ${notice.date} (its own notice, not the GPT-4o text one). Replacement: ${notice.replacement}.`));
+        `${raw} ${when} (its own notice, not a text-model one). Replacement: ${notice.replacement}.`));
     } else {
-      out.findings.push(finding("retired", `${raw} was shut down on ${notice.date}. Replacement: ${notice.replacement}.`));
+      out.findings.push(finding("retired", `${raw} ${when}. Replacement: ${notice.replacement}.`));
     }
   }
 }
 
+/** Two-character o-series names (`o3`, `o1-pro`) are also chemistry, compiler levels and ID codes. */
+const SHORT_ID = /^o\d(?:-pro|-mini)?$/;
+const MODEL_CONTEXT = /model|llm|openai|deployment/i;
+/** Words around a value that don't name it: `getenv("MODEL", "o3")`, `Field(default="o3")`, `const X = ...`. */
+const NEUTRAL_WORDS = /^(?:default|value|fallback|get|getenv|environ|os|process|env|self|this|const|let|var|export|str|Field|field|Optional|return|or|and|await)$/;
+
+/**
+ * A short o-series name counts only as the value of a model setting: `MODEL = "o3"`, `model="o3"`,
+ * `"model": "o3"`, `getenv("OPENAI_MODEL", "o3")`, `["--model", "o3"]`, `model: o3`. `pollutant = "o3"`,
+ * `["o1", "o2", "o3"]`, `REASON_CODE = "o1"` and `"Using o3"` don't.
+ */
+function shortIdIsModel(text: string, at: number, chunk: string, raw: string): boolean {
+  const lineStart = text.lastIndexOf("\n", at - 1) + 1;
+  const lineEnd = text.indexOf("\n", at);
+  const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+  if (chunk.trim() !== raw) {
+    // A config line: the name has to stand alone between delimiters (`model = o3 ; note`, `{ model: o3 }`).
+    if (chunk !== line) return false;
+    const end = at + raw.length;
+    if (!/[\s"'=:[,{(]/.test(text[at - 1] ?? " ") || !/^(?:[\s"',\]});#]|$)/.test(text.slice(end, end + 1))) return false;
+  }
+  let before = text.slice(lineStart, at);
+  const previous = text.slice(text.lastIndexOf("\n", lineStart - 2) + 1, Math.max(0, lineStart - 1));
+  if ((before.trim() === "" || /^\s*["'`]$/.test(before)) && /[=:]\s*$/.test(previous)) {
+    before = `${previous} ${before}`; // `X =\n  "o3"` (Prettier wrapped the assignment)
+  }
+  // The key or name this value is given to: the text after the last separator before it. When that holds only
+  // neutral words (`default=`, nothing at all), the whole line before the value decides.
+  const key = before.slice(Math.max(...[",", "{", "(", "[", ";"].map((c) => before.lastIndexOf(c))) + 1);
+  const words = (key.match(/[A-Za-z_$][\w$-]*/g) ?? []).filter((w) => !NEUTRAL_WORDS.test(w));
+  return MODEL_CONTEXT.test(words.length > 0 ? words.join(" ") : before);
+}
+
+/** One clause on what the replacement changes for a text model's callers. */
+function targetSummary(notice: OpenAINotice): string {
+  const rules = TARGETS.get(notice.replacement)!;
+  const parts = [notice.reasoning
+    ? "a reasoning model with the same default effort (medium)"
+    : "a reasoning model (default reasoning effort: medium)"];
+  if (rules.chatTools === "responses-only") parts.push("tool calls need the Responses API");
+  if (!rules.none) parts.push('no "none" or "minimal" effort, so no temperature/top_p');
+  return parts.join("; ");
+}
+
 type Via = "sdk" | "langchain" | "litellm" | "raw";
 type Api = "chat" | "responses";
-type ModelState = "swap" | "gpt6-none" | "gpt6-responses" | "maybe";
+/**
+ * - `swap`: a retiring text model `--fix` can replace; `pro`: gpt-5-pro / o3-pro;
+ * - `current`: already a GPT-6 model (its own rules still apply); `maybe`: a variable that may hold a retiring ID.
+ */
+type ModelState = "swap" | "pro" | "current" | "maybe";
 
-interface Resolved {
-  state: ModelState;
+interface Classified {
+  state: Exclude<ModelState, "maybe">;
+  /** The GPT-6 model the call runs on after the migration (a key of TARGETS). */
+  target: string;
+  notice?: OpenAINotice;
+}
+
+interface Resolved extends Classified {
+  /** Where the ID was set when it came from an assignment or a parameter default in this file. */
+  setAt?: [number, number];
+  /** "maybe" stands in for the classified state when the ID was only suspected. */
+  maybe: boolean;
   /** Why a "maybe" model is suspected. */
   note?: string;
+  /** Repo defaults for this model name disagree: different replacements, different rules. */
+  mixed?: boolean;
+  /** "<file>:<line>" of each repo default a "maybe" model may come from. */
+  origins?: string[];
 }
 
 const ENV_NAME = /(?:getenv|environ\.get|environ\[|process\.env\.|process\.env\[|env\()\s*\(?\s*["']?([A-Za-z_][A-Za-z0-9_]*)/;
@@ -248,8 +423,10 @@ interface CallSite {
   api: Api;
   group: Entry[];
   open: number;
-  /** Keys added to a spread options dict after it was built (`args["tools"] = ...`). */
+  /** Keys set on a spread options dict after it was built (`args["tools"] = ...`). */
   extraKeys: Set<string>;
+  /** The spread dict is changed in ways this tool can't read (`params.update(...)`, `Object.assign(params, ...)`). */
+  mutated: boolean;
 }
 
 const MODEL_KEYS = new Set(["model", "model_name", "modelName"]);
@@ -277,14 +454,24 @@ function findCallSites(src: Source): CallSite[] {
     if (close === -1) return;
     const group = findParamGroup(src, open, close, 0);
     if (group) {
-      sites.push({ at, via, api, group: group.entries, open: group.open, extraKeys: new Set() });
+      sites.push({ at, via, api, group: group.entries, open: group.open, extraKeys: new Set(), mutated: false });
       return;
     }
-    // `create(**create_params)`: the options dict built just before the call holds the model.
-    for (const spread of spreadsIn(src, open, close, 0)) {
+    // `create(**create_params)`: the options dict built just before the call holds the model. JS often passes
+    // the object itself (`create(params)`), which reads the same way.
+    const args = entries(src, open, close);
+    const passed = args.length === 1 && (args[0]!.style === "positional" || args[0]!.style === "shorthand") && /^[A-Za-z_$][\w$]*$/.test(valueText(src, args[0]!))
+      ? [args[0]!] : [];
+    for (const spread of [...spreadsIn(src, open, close, 0), ...passed]) {
       const dict = spreadDict(src, spreadName(src, spread), at);
       if (dict?.entries.some((e) => e.key && MODEL_KEYS.has(e.key))) {
-        sites.push({ at, via, api, group: dict.entries, open: dict.open, extraKeys: dict.extraKeys });
+        // `create(**params, tools=tools)`: the call's own arguments and other spreads count too.
+        const owner = enclosingOpen(src, spread.start);
+        const own = entries(src, owner, matchingClose(src, owner))
+          .filter((e) => e.start !== spread.start && (e.key || e.style === "spread"));
+        sites.push({
+          at, via, api, group: [...dict.entries, ...own], open: dict.open, extraKeys: dict.extraKeys, mutated: dict.mutated,
+        });
         return;
       }
     }
@@ -341,36 +528,55 @@ function idsIn(src: Source, from: number, to: number): string[] {
   return src.strings.filter((s) => s.start >= from && s.start < to && !s.block).map((s) => s.value);
 }
 
-function classify(id: string): ModelState | null {
+function classify(id: string): Classified | null {
   const parsed = parseModelId(id);
-  if (parsed && !parsed.fineTune && noticeFor(parsed.base)?.group === "text") return "swap";
-  const bare = id.replace(/^(?:openrouter\/)?openai\//, "");
-  if (NEEDS_NONE_FOR_CHAT_TOOLS.has(bare)) return "gpt6-none";
-  if (RESPONSES_ONLY_TOOLS.has(bare)) return "gpt6-responses";
-  return null;
+  if (parsed && !parsed.fineTune) {
+    const notice = noticeFor(parsed.base)!;
+    if (notice.group === "text") return { state: "swap", target: notice.replacement, notice };
+    if (notice.group === "pro") return { state: "pro", target: SOL_61, notice };
+  }
+  const bare = stripPrefix(id);
+  return TARGETS.has(bare) ? { state: "current", target: bare } : null;
 }
 
-function resolveModel(src: Source, entry: Entry, fileHasSwapId: boolean, defaults: RepoDefaults): Resolved | null {
-  const state = resolveInFile(src, entry);
-  if (state) return { state };
-  if (state === null) return null;
+/** A retiring text or pro model: the IDs worth following from a default into a call. */
+function retiring(id: string): boolean {
+  const state = classify(id)?.state;
+  return state === "swap" || state === "pro";
+}
+
+function resolveModel(
+  src: Source, entry: Entry, fileSwap: Classified | undefined, defaults: RepoDefaults,
+): Resolved | null {
+  const found = resolveInFile(src, entry);
+  if (found) return { ...found, maybe: false };
+  if (found === null) return null;
   const value = entry.style === "shorthand" ? entry.key! : valueText(src, entry);
   const last = /(\.?)([A-Za-z_$][\w$]*)\s*\)?\s*$/.exec(value);
   const keys = [ENV_NAME.exec(value)?.[1]?.toLowerCase(), last?.[2]?.toLowerCase()];
   if (last?.[1]) keys.push(`.${last[2]!.toLowerCase()}`); // `agent.model` → a class field named model
   for (const key of keys) {
-    const origin = key ? defaults.get(key) : undefined;
-    if (origin) return { state: "maybe", note: ` The model may come from there: ${origin}.` };
+    const lines = key ? defaults.get(key)?.split("\n") ?? [] : [];
+    const suspects = lines.map((l) => classify(l.slice(l.lastIndexOf(" ") + 1)));
+    const suspect = suspects[0];
+    if (suspect) {
+      return {
+        ...suspect, maybe: true, mixed: new Set(suspects.map((c) => c?.target)).size > 1, origins: lines.map((l) => l.slice(0, l.lastIndexOf(" sets "))),
+        note: ` The model may come from there: ${lines.join("; ")}.`,
+      };
+    }
   }
-  return fileHasSwapId ? { state: "maybe", note: " The model comes from a variable; this file also names a retiring ID." } : null;
+  return fileSwap
+    ? { ...fileSwap, maybe: true, note: " The model comes from a variable; this file also names a retiring ID." }
+    : null;
 }
 
-/** The model's state from this file alone; null = some other model, undefined = can't tell. */
-function resolveInFile(src: Source, entry: Entry): Exclude<ModelState, "maybe"> | null | undefined {
+/** The model from this file alone; null = some other model, undefined = can't tell. */
+function resolveInFile(src: Source, entry: Entry): (Classified & { setAt?: [number, number] }) | null | undefined {
   const literals = idsIn(src, entry.valueStart, entry.end);
   for (const id of literals) {
-    const state = classify(id);
-    if (state && state !== "maybe") return state;
+    const found = classify(id);
+    if (found) return found;
   }
   // A literal that names some other model (`model="gpt-5.6-sol"`, `os.getenv("M", "o3")`): not ours.
   if (literals.some((value) => MODEL_LIKE.test(value) && !/^[A-Z_][A-Z0-9_]*$/.test(value))) return null;
@@ -387,8 +593,8 @@ function resolveInFile(src: Source, entry: Entry): Exclude<ModelState, "maybe"> 
       if (open !== -1 && src.text[open] !== "{") continue;
       const ids = idsIn(src, m.index, m.index + m[0].length);
       for (const id of ids) {
-        const state = classify(id);
-        if (state && state !== "maybe") return state;
+        const found = classify(id);
+        if (found) return { ...found, setAt: [m.index, m.index + m[0].length] };
       }
       if (ids.some((id) => /^[a-z][\w./:-]*-[\w.]+$/.test(id))) return null; // set to some other model
     }
@@ -399,8 +605,8 @@ function resolveInFile(src: Source, entry: Entry): Exclude<ModelState, "maybe"> 
       const open = enclosingOpen(src, m.index);
       if (open === -1 || src.text[open] !== "(") continue;
       if (!/(?:\bdef\s+\w+|\bfunction\s*\w*|\bconstructor)\s*$/.test(src.text.slice(Math.max(0, open - 60), open))) continue;
-      const state = classify(m[2]!);
-      if (state && state !== "maybe") return state;
+      const found = classify(m[2]!);
+      if (found) return { ...found, setAt: [m.index, m.index + m[0].length] };
     }
   }
   return undefined;
@@ -427,6 +633,7 @@ interface SpreadDict {
   open: number;
   entries: Entry[];
   extraKeys: Set<string>;
+  mutated: boolean;
 }
 
 /**
@@ -444,35 +651,50 @@ function spreadDict(src: Source, name: string, before: number): SpreadDict | nul
     if (src.mask[open] !== CODE) continue;
     const close = matchingClose(src, open);
     if (close === -1 || close > before) continue;
-    found = { open, entries: entries(src, open, close), extraKeys: new Set() };
+    found = { open, entries: entries(src, open, close), extraKeys: new Set(), mutated: false };
   }
   if (!found) return null;
   const later = new RegExp(`(?<![\\w$.])${bare}\\s*(?:\\[\\s*["']([\\w$]+)["']\\s*\\]|\\.([A-Za-z_$][\\w$]*))\\s*=(?!=)`, "g");
   for (const m of src.text.slice(found.open, before).matchAll(later)) {
     if (src.mask[found.open + m.index] === CODE) found.extraKeys.add((m[1] ?? m[2])!);
   }
+  const mutate = new RegExp(`(?<![\\w$.])${bare}\\s*\\.\\s*(?:update|setdefault|__setitem__)\\s*\\(|Object\\.assign\\(\\s*${bare}\\b`, "g");
+  for (const m of src.text.slice(found.open, before).matchAll(mutate)) {
+    if (src.mask[found.open + m.index] === CODE) found.mutated = true;
+  }
   return found;
 }
 
 const EDIT_VIAS = new Set<string>(["sdk:py", "sdk:js", "raw:py", "raw:js", "litellm:py", "langchain:py"]);
 
-function analyzeCallSites(file: string, src: Source, out: OpenAIScan, defaults: RepoDefaults): void {
+function analyzeCallSites(
+  file: string, src: Source, out: OpenAIScan, defaults: RepoDefaults, today: string,
+): void {
   const sites = findCallSites(src);
+  holdWrappers(src, out, new Set(sites.map((s) => s.open)));
   if (sites.length === 0) return;
-  const fileHasSwapId = src.strings.some((s) =>
-    !s.block && isSetting(src.text, s.start, s.end, s.value) &&
-    [...s.value.matchAll(TOKEN)].some((m) => classify(m[0]) === "swap"));
+  const fileSwap = src.strings
+    .filter((s) => !s.block && isSetting(src.text, s.start, s.end, s.value))
+    .flatMap((s) => [...s.value.matchAll(TOKEN)].map((m) => classify(m[0])))
+    .find((c) => c?.state === "swap" || c?.state === "pro") ?? undefined;
   const instructorToolMode = /\b(?:instructor\.)?(?:from_openai|patch)\s*\(/.test(src.text) &&
     /\bimport\s+instructor\b|\bfrom\s+instructor\b/.test(src.text) &&
     !/Mode\.(?!TOOLS\b|PARALLEL_TOOLS\b|TOOLS_STRICT\b)[A-Z_]+/.test(src.text);
   const langchainTools = [...src.text.matchAll(new RegExp(LANGCHAIN_TOOLS, "g"))]
     .some((m) => src.mask[m.index] === CODE);
 
+  const proVetoes: [number, number][] = [];
+  const textLines = src.text.split("\n");
   for (const site of sites) {
     const modelEntry = site.group.find((e) => e.key && MODEL_KEYS.has(e.key))!;
-    const resolved = resolveModel(src, modelEntry, fileHasSwapId, defaults);
+    const resolved = resolveModel(src, modelEntry, fileSwap, defaults);
     if (!resolved) continue;
-    const { state } = resolved;
+    const { state, target, maybe } = resolved;
+    const rules: TargetRules = TARGETS.get(target)!;
+    const days = resolved.notice ? daysUntil(resolved.notice.date, today) : undefined;
+    const urgent = days !== undefined && days <= URGENT_DAYS;
+    // A shutdown more than 90 days out is a warning, and so is what its call sites need.
+    const far = days !== undefined && days > SOON_DAYS;
 
     const byKey = new Map(site.group.filter((e) => e.key).map((e) => [e.key!, e]));
     // `**OPTIONS` / `...OPTIONS`: read the keys of that dict / object literal when this file defines it.
@@ -485,8 +707,15 @@ function analyzeCallSites(file: string, src: Source, out: OpenAIScan, defaults: 
       for (const key of dict?.extraKeys ?? []) extraKeys.add(key);
     }
     const has = (key: string) => byKey.has(key) || extraKeys.has(key);
-    // `**opts` built somewhere this file doesn't show: it may carry tools or sampling settings.
-    const unseenSpread = site.group.some((e) => e.style === "spread" && !spreadDict(src, spreadName(src, e), site.at));
+    // `**opts` built somewhere this file doesn't show, or an effort set on the dict after it was built
+    // (`params["reasoning_effort"] = ...`): either may carry settings that clash with the new model.
+    const unseenSpread = site.mutated ||
+      site.group.some((e) => {
+        if (e.style !== "spread") return false;
+        const dict = spreadDict(src, spreadName(src, e), site.at);
+        return !dict || dict.mutated;
+      }) ||
+      [...EFFORT_KEYS].some((k) => extraKeys.has(k));
     let api = site.api;
     const responsesFlag = byKey.get("use_responses_api") ?? byKey.get("useResponsesApi");
     if (site.via === "langchain" && responsesFlag && /true/i.test(valueText(src, responsesFlag))) api = "responses";
@@ -497,99 +726,284 @@ function analyzeCallSites(file: string, src: Source, out: OpenAIScan, defaults: 
       instructorTools;
     const sampling = [...SAMPLING_KEYS].filter(has);
     const effortEntry = [...EFFORT_KEYS].map((k) => byKey.get(k)).find(Boolean);
-    const effortNone = effortEntry !== undefined && /["']none["']/.test(valueText(src, effortEntry));
+    const effortValue = effortEntry
+      ? /["'](none|minimal|low|medium|high|xhigh|max)["']/.exec(valueText(src, effortEntry))?.[1]
+      : undefined;
+    const effortNone = effortValue === "none";
     const maxTokens = byKey.get("max_tokens");
 
     const line = lineOf(src.text, site.at);
-    const target = state === "swap" || state === "maybe" ? LUNA : "this GPT-6 model";
-    const canEdit = (state === "swap" || state === "gpt6-none") && !effortEntry && !unseenSpread &&
-      EDIT_VIAS.has(`${site.via}:${src.language}`);
-    const push = (rule: string, severity: Severity, message: string, fixable: boolean) => {
-      const where = resolved.note ?? "";
-      out.findings.push({
-        file, line, provider: "openai", rule, severity: state === "maybe" ? "warn" : severity,
-        message: message + where, fixable,
-      });
-    };
+    // An options dict several calls spread: a setting one call needs would reach the others too.
+    const sharedDict = sites.some((other) => other !== site && other.open === site.open);
+    const editable = !maybe && !sharedDict && EDIT_VIAS.has(`${site.via}:${src.language}`);
+    // --fix can add `reasoning_effort: "none"` when the target takes it and the call sets no effort yet.
+    const canAddNone = editable && state !== "pro" && rules.none && !effortEntry && !unseenSpread;
+    /** `fix`: "none" = fixed when --fix adds effort none; "pro" = fixed by the pro-mode swap; "rename" = always. */
+    type Fix = "none" | "pro" | "rename" | null;
+    const pending: { rule: string; severity: Severity; message: string; fix: Fix }[] = [];
+    const push = (rule: string, severity: Severity, message: string, fix: Fix = null) =>
+      pending.push({ rule, severity, message, fix });
     const label = `${viaLabel(site.via)} ${api === "chat" ? "Chat Completions" : "Responses"} call`;
+    /** Something only a person can change: the ID swap would leave a failing call. */
+    let manual = false;
+    // `# llm-retire-scan: ignore` on the call: its findings go, and so does the swap of the ID it reads.
+    if (ignoredLine(textLines, line)) manual = true;
+    // `model="gpt-5-nano" if fast else "gpt-5"`: two IDs with their own rules in one argument.
+    const ids = idsIn(src, modelEntry.valueStart, modelEntry.end).filter((v) => classify(v));
+    if (new Set(ids.map((v) => classify(v)!.target)).size > 1) {
+      push("model-varies", "warn",
+        `${label} picks between ${ids.join(" and ")}, which move to different models with different rules: ` +
+        "migrate each branch by hand.");
+      manual = true;
+    }
+    if (resolved.mixed) {
+      push("model-varies", "warn",
+        `${label}: the model default is set more than once in the repo, to IDs with different replacements; ` +
+        "check this call against each.");
+      manual = true;
+    }
     let wantNone = false;
 
-    if (state === "gpt6-responses" && hasTools && api === "chat") {
-      push("tools-responses-only", "error",
-        `${label} sends tools to a model that takes tool calls only on the Responses API.`, false);
+    if (state === "pro") {
+      if (api === "chat") {
+        push("pro-responses-only", "error",
+          `${label}: the replacement for pro is ${SOL_61} with reasoning.mode "pro", documented for the Responses ` +
+          "API only. Move this call to Responses; --fix leaves it.");
+        manual = true;
+      } else if (editable && !effortEntry && !unseenSpread && modelLiteral(src, modelEntry, true)) {
+        push("pro-mode", "error",
+          `${label}: --fix swaps the model to ${SOL_61} and adds reasoning: { mode: "pro" } (pro mode bills more ` +
+          "model work than standard).", "pro");
+      } else {
+        push("pro-mode", "error",
+          `${label}: set the model to ${SOL_61} and add "mode": "pro" to its reasoning settings by hand.`);
+        manual = true;
+      }
     }
-    if (state !== "gpt6-responses" && hasTools && api === "chat" && !effortNone) {
-      push("tools-effort", "error",
-        `${label} sends tools${instructorTools ? " (instructor Mode.TOOLS turns response_model into one)" : ""}. On ${target}, Chat Completions supports function calling only with ` +
-        `reasoning_effort "none"` + (effortEntry ? "; this call sets another effort (use none, or move to Responses)." :
-          "; the default is medium. Set it to none, or move this call to the Responses API to keep reasoning."),
-        canEdit);
-      wantNone = true;
+
+    if (hasTools && api === "chat" && state !== "pro") {
+      if (rules.chatTools === "responses-only") {
+        push("tools-responses-only", "error",
+          `${label} sends tools${instructorTools ? " (instructor Mode.TOOLS turns response_model into one)" : ""}. ` +
+          `${target} takes tool calls only on the Responses API, at any reasoning effort: move this call to Responses.`);
+        manual = true;
+      } else if (!effortNone) {
+        push("tools-effort", "error",
+          `${label} sends tools${instructorTools ? " (instructor Mode.TOOLS turns response_model into one)" : ""}. On ${target}, Chat Completions supports function calling only with ` +
+          `reasoning_effort "none"` + (effortEntry ? "; this call sets another effort (use none, or move to Responses)." :
+            "; the default is medium. Set it to none, or move this call to the Responses API to keep reasoning."),
+          "none");
+        wantNone = true;
+      }
     }
     if (sampling.length > 0 && !effortNone) {
-      push("sampling-effort", "error",
-        `${label} sets ${sampling.join(", ")}. On ${target}, temperature, top_p and top_logprobs (and logprobs on ` +
-        `Chat Completions) are rejected unless reasoning effort is "none"` +
-        (state === "gpt6-responses" ? " (which some GPT-6 models don't support: remove them)." : "."),
-        canEdit);
-      wantNone = wantNone || state !== "gpt6-responses";
+      if (rules.none) {
+        push("sampling-effort", "error",
+          `${label} sets ${sampling.join(", ")}. On ${target}, temperature, top_p and top_logprobs (and logprobs on ` +
+          'Chat Completions) are rejected unless reasoning effort is "none".', "none");
+        wantNone = true;
+      } else {
+        push("sampling-effort", "error",
+          `${label} sets ${sampling.join(", ")}. ${target} has no "none" effort, and temperature, top_p and ` +
+          "top_logprobs (logprobs on Chat Completions) are rejected at every other effort: remove them.");
+        manual = true;
+      }
     }
-    const renamable = (state === "swap" || state === "gpt6-none") && EDIT_VIAS.has(`${site.via}:${src.language}`);
-    if (maxTokens && api === "chat" && (site.via === "sdk" || site.via === "raw") && state !== "maybe") {
+    if (effortValue && !rules.efforts.includes(effortValue)) {
+      push("effort-value", "error",
+        `${label} sets reasoning effort "${effortValue}"; ${target} takes ${rules.efforts.join(", ")}.` +
+        (effortValue === "minimal" ? ' OpenAI\'s migration guide: "If your existing request uses minimal, start with low".' : ""));
+      manual = true;
+    }
+    if (maxTokens && api === "chat" && (site.via === "sdk" || site.via === "raw") && !maybe) {
+      const renamable = editable && state !== "pro" && maxTokens.keyStart !== undefined;
       push("max-tokens", "warn",
         `${label} sets max_tokens, deprecated in favour of max_completion_tokens; on a reasoning model the limit ` +
-        "also has to cover reasoning tokens.", renamable);
-      if (renamable && maxTokens.keyStart !== undefined) {
-        out.edits.push({ start: maxTokens.keyStart, end: maxTokens.keyStart + "max_tokens".length, text: "max_completion_tokens" });
+        "also has to cover reasoning tokens.", renamable ? "rename" : null);
+      if (renamable) {
+        out.edits.push({ start: maxTokens.keyStart!, end: maxTokens.keyStart! + "max_tokens".length, text: "max_completion_tokens" });
       }
     }
     const toolsFlagged = hasTools && api === "chat";
-    if ((state === "swap" || state === "gpt6-none") && !toolsFlagged && sampling.length === 0 && !effortEntry) {
+    const wasPlain = state === "swap" && !resolved.notice?.reasoning;
+    if ((wasPlain || (state === "current" && rules.none)) && !toolsFlagged && sampling.length === 0 && !effortEntry) {
       push("default-effort", "warn",
         `${label}: ${state === "swap" ? "after the swap it runs" : "it runs"} at the default medium reasoning effort ` +
-        `(slower, and reasoning tokens are billed as output). Set the effort explicitly; "none" skips reasoning.`, false);
+        `(slower, and reasoning tokens are billed as output). Set the effort explicitly; "none" skips reasoning.`);
     }
 
     // Swapping the ID alone would leave a call that fails on the new model: keep the old ID for a human.
-    const manual = wantNone && !canEdit;
-    if (state === "swap" && (manual || unseenSpread)) {
-      holdSwap(out, modelEntry, lineOf(src.text, modelEntry.valueStart), manual
-        ? " --fix leaves this call: change its tools or sampling settings by hand first (see the call-site finding)."
-        : " --fix leaves this call: it spreads options defined elsewhere, which may hold tools or temperature.");
-    } else if (wantNone && canEdit) {
-      out.edits.push(effortEdit(src, site, modelEntry, api));
+    const blocked = manual || (wantNone && !canAddNone) || unseenSpread;
+    const addNone = wantNone && canAddNone && !(state === "swap" && blocked);
+    const proFix = state === "pro" && !manual && pending.some((p) => p.fix === "pro");
+    const siteFindings: Finding[] = [];
+    for (const p of pending) {
+      const fixable = p.fix === "rename" || (p.fix === "none" && addNone) || (p.fix === "pro" && proFix);
+      siteFindings.push({
+        file, line, provider: "openai", rule: p.rule, severity: maybe || far ? "warn" : p.severity, urgent,
+        message: p.message + (p.fix === "pro" && !proFix ? " Not this time: fix the other findings on this call first." : "") +
+          (resolved.note ?? ""),
+        fixable,
+      });
+    }
+    out.findings.push(...siteFindings);
+    if (state === "swap" && blocked && resolved.origins) out.holds.push(...resolved.origins);
+    if (state === "swap" && blocked) {
+      const spans: [number, number][] = [[modelEntry.valueStart, modelEntry.end]];
+      if (resolved.setAt) spans.push(resolved.setAt);
+      holdSwap(src.text, out, spans, unseenSpread && !manual && !wantNone
+        ? " --fix leaves this call: it spreads options defined elsewhere (or sets the effort after building them), which may clash with the new model."
+        : " --fix leaves this call: change its tools, sampling or effort settings by hand first (see the call-site finding).");
+    } else if (addNone) {
+      const edit = paramEdit(src, site, modelEntry, api === "chat" ? "effort-chat" : "effort-responses");
+      out.edits.push(edit);
+      if (state === "swap") {
+        const needs: [number, number][] = [[modelEntry.valueStart, modelEntry.end]];
+        if (resolved.setAt) needs.push(resolved.setAt);
+        out.links.push({ edit, needs, findings: siteFindings.filter((f) => f.fixable && f.rule !== "max-tokens") });
+      }
+    }
+    if (proFix) proSwap(src, out, modelEntry, site, siteFindings.filter((f) => f.fixable));
+    // A pro call that needs a manual change: no other call may move the ID it shares (an options dict, a constant).
+    if (state === "pro" && manual) {
+      proVetoes.push([modelEntry.valueStart, modelEntry.end]);
+      if (resolved.setAt) proVetoes.push(resolved.setAt);
     }
   }
+  out.edits = out.edits.filter((e) => !(e.text === SOL_61 && proVetoes.some(([from, to]) => e.start >= from && e.end <= to)));
 }
 
-/** Drops the ID-swap edits inside the call's model argument and marks its shutdown finding as not fixed. */
-function holdSwap(out: OpenAIScan, model: Entry, line: number, note: string): void {
-  const before = out.edits.length;
-  out.edits = out.edits.filter((e) => !(e.start >= model.valueStart && e.end <= model.end && e.text === LUNA));
-  if (out.edits.length === before) return;
+/** The model ID literal inside a call's model argument (`model="o3-pro"`, `getenv("M", "o3-pro")`). */
+function modelLiteral(src: Source, model: Entry, whole = false): Source["strings"][number] | undefined {
+  const literal = src.strings.find((s) => s.start >= model.valueStart && s.start < model.end && !s.block && parseModelId(s.value));
+  // `whole`: the literal is the entire argument, not a `getenv("M", "o3-pro")` default another value may replace.
+  if (whole && literal && valueText(src, model).trim() !== src.text.slice(literal.start, literal.end)) return undefined;
+  return literal;
+}
+
+/**
+ * Drops the ID-swap edits inside `spans` (the call's model argument, and the assignment it reads the ID from)
+ * and marks their shutdown findings as not fixed.
+ */
+function holdSwap(text: string, out: OpenAIScan, spans: [number, number][], note: string): void {
+  const held = new Set<number>();
+  out.edits = out.edits.filter((e) => {
+    const inside = TARGETS.has(e.text) && spans.some(([from, to]) => e.start >= from && e.end <= to);
+    if (inside) held.add(lineOf(text, e.start));
+    return !inside;
+  });
   for (const f of out.findings) {
-    if (f.line === line && f.rule === "shutdown" && f.fixable) {
+    if (held.has(f.line) && f.rule === "shutdown" && f.fixable) {
       f.fixable = false;
       f.message += note;
     }
   }
 }
 
-function effortEdit(src: Source, site: CallSite, model: Entry, api: Api): Edit {
+const RISKY_KEYS = new Set([...TOOL_KEYS, ...SAMPLING_KEYS]);
+const MODEL_KEY_VALUE = /\b(?:model|model_name|modelName)\s*[=:]\s*(?=[A-Za-z_$])/g;
+
+/**
+ * `Agent(model="o3", tools=[...])`, `Agent(llm=LLM(model=MODEL), tools=...)`, `Agent("openai/gpt-5", temperature=0)`:
+ * code this tool doesn't know sends tools or sampling settings next to the model. Whether the replacement takes
+ * them depends on the API that code calls, which can't be seen from here, so the ID is kept and the reason given.
+ */
+function holdWrappers(src: Source, out: OpenAIScan, known: ReadonlySet<number>): void {
+  const enclosing = enclosingIndex(src);
+  const candidates = new Map<number, { open: number; entry: Entry }>();
+  const consider = (at: number, positionalOk: boolean) => {
+    const open = enclosing[at]!;
+    if (open === -1 || known.has(open)) return;
+    const close = matchingClose(src, open);
+    if (close === -1) return;
+    const list = entries(src, open, close);
+    const entry = list.find((e) => e.start <= at && at < e.end);
+    if (!entry) return;
+    const keyed = entry.key !== null && MODEL_KEYS.has(entry.key);
+    const positional = positionalOk && entry.style === "positional" && list[0] === entry && src.text[open] === "(";
+    if (keyed || positional) candidates.set(entry.start, { open, entry });
+  };
+  for (const literal of src.strings) {
+    if (!literal.block && classify(literal.value)?.state === "swap") consider(literal.start, true);
+  }
+  for (const m of src.text.matchAll(MODEL_KEY_VALUE)) {
+    if (src.mask[m.index] === CODE) consider(m.index + m[0].length, false);
+  }
+
+  for (const { open, entry } of candidates.values()) {
+    const found = resolveInFile(src, entry);
+    if (found?.state !== "swap") continue;
+    let group = open;
+    let risky = false;
+    for (let depth = 0; depth < 3 && group !== -1 && !known.has(group); depth += 1) {
+      const close = matchingClose(src, group);
+      if (close === -1) break;
+      if (entries(src, group, close).some((e) => e.key && RISKY_KEYS.has(e.key))) {
+        risky = true;
+        break;
+      }
+      group = enclosing[group]!;
+    }
+    if (!risky) continue;
+    const spans: [number, number][] = [[entry.valueStart, entry.end]];
+    if (found.setAt) spans.push(found.setAt);
+    holdSwap(src.text, out, spans,
+      ` It goes through code this tool doesn't know, next to tools or sampling settings: check which API that code ` +
+      `calls and what ${found.target} accepts there before swapping. --fix leaves it.`);
+  }
+}
+
+/**
+ * For every position, the innermost open bracket around it (-1 at top level): `enclosingOpen` for the whole file
+ * in one pass, so walking up from many candidates stays linear.
+ */
+function enclosingIndex(src: Source): Int32Array {
+  const index = new Int32Array(src.text.length + 1);
+  const stack: number[] = [];
+  for (let i = 0; i <= src.text.length; i += 1) {
+    index[i] = stack.length > 0 ? stack[stack.length - 1]! : -1;
+    if (i === src.text.length || src.mask[i] !== CODE) continue;
+    const ch = src.text[i]!;
+    if (ch === "(" || ch === "[" || ch === "{") stack.push(i);
+    else if ((ch === ")" || ch === "]" || ch === "}") && stack.length > 0) stack.pop();
+  }
+  return index;
+}
+
+/** gpt-5-pro / o3-pro in a Responses call: swap the literal to gpt-6.1-sol and add `reasoning: { mode: "pro" }`. */
+function proSwap(src: Source, out: OpenAIScan, model: Entry, site: CallSite, findings: Finding[]): void {
+  const literal = modelLiteral(src, model)!;
+  const parsed = parseModelId(literal.value)!;
+  const start = literal.start + literal.quote.length + parsed.prefix.length;
+  const swap: Edit = { start, end: start + parsed.base.length, text: SOL_61 };
+  const insert = paramEdit(src, site, model, "pro");
+  out.edits.push(swap, insert);
+  const line = lineOf(src.text, literal.start);
+  const shutdown = out.findings.filter((f) => f.line === line && f.rule === "shutdown");
+  for (const f of shutdown) f.fixable = true;
+  out.links.push({ edit: insert, pair: swap, needs: [[swap.start, swap.end]], findings: [...findings, ...shutdown] });
+}
+
+type Param = "effort-chat" | "effort-responses" | "pro";
+
+/** Inserts a reasoning setting right after the model argument, in the call's own syntax. */
+function paramEdit(src: Source, site: CallSite, model: Entry, param: Param): Edit {
   const quote = src.strings.find((s) => s.start >= model.valueStart && s.start < model.end)?.quote ?? '"';
   const q = quote.length === 1 && quote !== "`" ? quote : '"';
-  let param: string;
+  const [key, inner, value] = param === "effort-chat"
+    ? ["reasoning_effort", null, "none"]
+    : ["reasoning", param === "pro" ? "mode" : "effort", param === "pro" ? "pro" : "none"];
+  let text: string;
   if (model.style === "kwarg") {
-    param = api === "chat" ? `reasoning_effort=${q}none${q}` : `reasoning={${q}effort${q}: ${q}none${q}}`;
+    text = inner ? `${key}={${q}${inner}${q}: ${q}${value}${q}}` : `${key}=${q}${value}${q}`;
   } else if (model.style === "quoted") {
     const k = model.keyQuote!;
-    param = api === "chat" ? `${k}reasoning_effort${k}: ${k}none${k}` : `${k}reasoning${k}: {${k}effort${k}: ${k}none${k}}`;
+    text = inner ? `${k}${key}${k}: {${k}${inner}${k}: ${k}${value}${k}}` : `${k}${key}${k}: ${k}${value}${k}`;
   } else {
-    param = api === "chat" ? `reasoning_effort: ${q}none${q}` : `reasoning: { effort: ${q}none${q} }`;
+    text = inner ? `${key}: { ${inner}: ${q}${value}${q} }` : `${key}: ${q}${value}${q}`;
   }
   const multiline = src.text.slice(site.open + 1, model.start).includes("\n");
-  const text = multiline ? `,\n${indentOf(src.text, model.start)}${param}` : `, ${param}`;
-  return { start: model.end, end: model.end, text };
+  return { start: model.end, end: model.end, text: multiline ? `,\n${indentOf(src.text, model.start)}${text}` : `, ${text}` };
 }
 
 function viaLabel(via: Via): string {

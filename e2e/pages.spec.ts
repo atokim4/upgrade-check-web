@@ -36,7 +36,7 @@ test("/deadlines counts days from the visitor's clock and marks today", async ({
   await expect(row("n8n 3.0")).toHaveAttribute("data-state", "undated");
   // The today rule sits right before the first date still ahead.
   await expect(page.locator(".tt-now + .tt-row .tt-name")).toHaveText("Claude Sonnet 4.5 retires");
-  await expect(page.locator("[data-today]")).toHaveText("By your clock it is 13 Nov 2026: 4 of these dates have passed, 9 are still ahead.");
+  await expect(page.locator("[data-today]")).toHaveText("By your clock it is 13 Nov 2026: 5 of these dates have passed, 11 are still ahead.");
   expect(errors).toEqual([]);
 });
 
@@ -81,6 +81,14 @@ test.describe("engines on real repos @network", () => {
     expect(errors).toEqual([]);
   });
 
+  test("OpenAI: o3 with tools in pixeltable/pixelagent", async ({ page }) => {
+    const errors = await scanExample(page, "gpt-5-o3-shutdown");
+    const llm = section(page, "OpenAI and Claude model retirements");
+    await expect(llm.locator(".finding", { hasText: "o3-2025-04-16" }).first()).toContainText("slack-agent/agent.py:8");
+    await expect(llm).toContainText("goes through code this tool doesn't know");
+    expect(errors).toEqual([]);
+  });
+
   test("Google Custom Search endpoint in assafelovic/gpt-researcher", async ({ page }) => {
     const errors = await scanExample(page, "google-custom-search-api-shutdown");
     await expect(section(page, "Google Custom Search JSON API").locator(".finding", { hasText: "endpoint" }).first()).toContainText(
@@ -98,6 +106,14 @@ test.describe("engines on real repos @network", () => {
   test("Postgres 18 data mount in 3Corners-Labs/OpenPlanner", async ({ page }) => {
     const errors = await scanExample(page, "postgres-18-docker-upgrade");
     await expect(section(page, "Postgres 18 in Docker")).toContainText("docker-compose.yml:245");
+    expect(errors).toEqual([]);
+  });
+
+  test("undeclared @eslint/js and globals in aggre/ullr's ESLint 10 bump", async ({ page }) => {
+    const errors = await scanExample(page, "eslint-10-upgrade");
+    const eslint = section(page, "ESLint 10");
+    await expect(eslint).toContainText("eslint.config.mjs:1");
+    await expect(eslint).toContainText("globals");
     expect(errors).toEqual([]);
   });
 

@@ -10,6 +10,7 @@ const HITS: Record<string, Record<string, string>> = {
   "google-cse": { "search.py": "URL = 'https://www.googleapis.com/customsearch/v1'\n" },
   deno: { ".github/workflows/d.yml": "steps:\n  - uses: denoland/deployctl@v1\n" },
   pg18: { "docker-compose.yml": "services:\n  db:\n    image: postgres:18\n    volumes:\n      - d:/var/lib/postgresql/data\nvolumes:\n  d:\n" },
+  eslint10: { "eslint.config.mjs": "import js from '@eslint/js'\nexport default [js.configs.recommended]\n", "app/package.json": '{"devDependencies":{"eslint":"^10.0.0"}}' },
   n8n: { "flows/a.json": '{"nodes":[{"name":"c","type":"n8n-nodes-base.cron"}]}' },
 };
 
@@ -26,7 +27,7 @@ describe("checker registry", () => {
   it("doesn't load engines whose subject isn't in the repo", async () => {
     const report = await runChecks(repoOf({ "package.json": '{"name":"x"}', "index.js": "console.log(1)\n" }), "2026-11-13");
     expect(report.checkers.map((c) => c.id)).toEqual(["supabase-cli-v3", "node26", "preflight"]);
-    expect(report.notUsed.map((c) => c.id)).toEqual(["prisma", "llm", "gemini-25", "google-cse", "deno", "pg18", "n8n"]);
+    expect(report.notUsed.map((c) => c.id)).toEqual(["prisma", "llm", "gemini-25", "google-cse", "deno", "pg18", "eslint10", "n8n"]);
   });
 
   it("limits a scan with `only`", async () => {

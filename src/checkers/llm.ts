@@ -20,13 +20,43 @@ interface Rule {
 
 export const RULES: Record<string, Rule> = {
   shutdown: {
-    title: "GPT-4o / GPT-4.1 model ID",
-    why: "OpenAI shuts the GPT-4o and GPT-4.1 text models down on 2027-01-14. After that the request fails.",
-    fix: "Switch to `gpt-6-luna`. It is a reasoning model, so check the call-site findings for tools, temperature and effort.",
+    title: "OpenAI model ID that shuts down",
+    why: "OpenAI shuts gpt-5, gpt-5-mini, gpt-5-nano, gpt-5-pro, o3 and o3-pro down on 2026-12-11, and the GPT-4o / GPT-4.1 text models on 2027-01-14. After that the request fails.",
+    fix: "Switch to the replacement named in the finding (gpt-6.1-sol, gpt-6.1-terra or gpt-6-luna). They take different parameters, so check the call-site findings for tools, temperature and effort.",
     source: OPENAI_DOCS,
   },
+  "image-shutdown": {
+    title: "GPT Image model ID that shuts down",
+    why: "gpt-image-1.5, gpt-image-1-mini and chatgpt-image-latest stop on 2026-12-01; gpt-image-2 on 2027-02-10.",
+    fix: "Pick gpt-image-2.6-sunburst (detailed work) or gpt-image-2.6-flare (fast iteration) on the Image API. Leaving out `complexity` now means \"high\".",
+    source: OPENAI_DOCS,
+  },
+  "pro-mode": {
+    title: "gpt-5-pro / o3-pro call",
+    why: "The replacement is gpt-6.1-sol with `reasoning.mode: \"pro\"`, documented for the Responses API only. A plain ID swap drops pro mode.",
+    fix: "Set the model to `gpt-6.1-sol` and add `\"mode\": \"pro\"` to the call's reasoning settings.",
+    source: OPENAI_REASONING,
+  },
+  "pro-responses-only": {
+    title: "gpt-5-pro / o3-pro on Chat Completions",
+    why: "Pro mode on gpt-6.1-sol is documented for the Responses API only.",
+    fix: "Move the call to the Responses API with `reasoning: { mode: \"pro\" }`.",
+    source: OPENAI_REASONING,
+  },
+  "model-varies": {
+    title: "The model can be one of several retiring IDs",
+    why: "The call picks between IDs, or reads a default set to different IDs in different files, and they move to GPT-6 models with different rules.",
+    fix: "Migrate each branch or each definition by hand, checking tools, sampling and effort against its own replacement.",
+    source: OPENAI_DOCS,
+  },
+  "effort-value": {
+    title: "Reasoning effort the new model doesn't take",
+    why: "No GPT-6 model lists `minimal`, and gpt-6.1-sol has no `none` either.",
+    fix: "OpenAI's migration guide: if a request uses `minimal`, start with `low` and compare results.",
+    source: "https://developers.openai.com/api/docs/guides/latest-model",
+  },
   "audio-shutdown": {
-    title: "GPT-4o audio, speech or realtime model ID",
+    title: "Audio, speech, transcription or realtime model ID",
     why: "These models have their own shutdown notices, with dates apart from the text models.",
     fix: "Move to the replacement named in the finding before its date.",
     source: OPENAI_DOCS,
@@ -51,14 +81,14 @@ export const RULES: Record<string, Rule> = {
   },
   "tools-responses-only": {
     title: "Tools sent on Chat Completions to a Responses-only model",
-    why: "Some GPT-6 models take tool calls only on the Responses API.",
+    why: "gpt-6.1-sol (from gpt-5 and o3), gpt-6.1-terra (from gpt-5-mini) and gpt-6-astra take tool calls only on the Responses API, at any reasoning effort.",
     fix: "Move this call to the Responses API.",
     source: OPENAI_REASONING,
   },
   "sampling-effort": {
     title: "`temperature` / `top_p` on a reasoning model",
-    why: "On GPT-6 models these parameters are rejected unless reasoning effort is \"none\".",
-    fix: "Set reasoning effort to \"none\", or remove the sampling parameters.",
+    why: "On GPT-6 models these parameters are rejected unless reasoning effort is \"none\", and gpt-6.1-sol has no \"none\".",
+    fix: "Set reasoning effort to \"none\" where the model takes it, or remove the sampling parameters.",
     source: OPENAI_REASONING,
   },
   "max-tokens": {
@@ -69,7 +99,7 @@ export const RULES: Record<string, Rule> = {
   },
   "default-effort": {
     title: "Runs at the default reasoning effort after the swap",
-    why: "GPT-6 Luna defaults to medium effort: slower answers, and reasoning tokens are billed as output.",
+    why: "GPT-6 models default to medium effort: after a move from GPT-4o or GPT-4.1, answers are slower and reasoning tokens are billed as output.",
     fix: "Set the effort explicitly; \"none\" skips reasoning.",
     source: OPENAI_REASONING,
   },
@@ -151,15 +181,19 @@ export function check(repo: LoadedRepo): CheckerReport {
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 
   const fixable = raw.filter((f) => f.fixable).length;
+  const urgent = raw.filter((f) => f.urgent).length;
   return {
     id: "llm",
     name: "OpenAI and Claude model retirements",
-    about: "GPT-4o / GPT-4.1 shut down on 2027-01-14 (and the gpt-6-luna tools trap), Claude Sonnet 4.5 retires on 2026-11-30, plus IDs already gone.",
+    about: "GPT Image 1.5 stops on 2026-12-01, gpt-5 / o3 on 2026-12-11 (and the GPT-6 tools trap), GPT-4o / GPT-4.1 on 2027-01-14, Claude Sonnet 4.5 retires on 2026-11-30, plus IDs already gone.",
     version: versions.llm.version,
     repoUrl: `https://github.com/${versions.llm.repo}`,
     cli: { label: "Fix it on a local checkout (Node 22.18+)", command: `git clone https://github.com/${versions.llm.repo} /tmp/llm-retire-scan && node /tmp/llm-retire-scan/src/cli.ts . --fix` },
     rulesChecked: Object.keys(RULES).length,
     findings,
-    notes: fixable ? [`The CLI's --fix rewrites ${fixable} of these lines by itself (ID swaps and reasoning_effort where it is safe).`] : [],
+    notes: [
+      ...(urgent ? [`${urgent} of these are urgent: the model is already off or shuts down within 30 days.`] : []),
+      ...(fixable ? [`The CLI's --fix rewrites ${fixable} of these lines by itself (ID swaps and reasoning settings where it is safe).`] : []),
+    ],
   };
 }

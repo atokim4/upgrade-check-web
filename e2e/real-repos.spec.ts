@@ -37,10 +37,11 @@ test("Supabase CLI v3: [inbucket] in config.toml (vercel/nextjs-subscription-pay
   expect(errors).toEqual([]);
 });
 
-test("a clean repo says nothing breaks (expressjs/express)", async ({ page }) => {
+test("expressjs/express: only its eslintrc config trips a checker (ESLint 10), nothing else", async ({ page }) => {
   const errors = await check(page, "expressjs/express@43fca52d28a422c8be48fd489cbd4f2d6152bab6");
-  await expect(page.locator(".verdict h2")).toHaveText("Nothing here breaks on these upgrades");
-  await expect(page.locator(".checker.has-findings")).toHaveCount(0);
+  await expect(page.locator(".checker.has-findings")).toHaveCount(1);
+  await expect(section(page, "ESLint 10").locator(".finding", { hasText: "eslintrc-only" })).toContainText(".eslintrc.yml:1");
+  await expect(section(page, "OpenAI and Claude model retirements").locator(".finding")).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

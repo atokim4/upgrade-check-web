@@ -54,13 +54,17 @@ function containerTargets(file: string, y: YamlDoc, obj: Record<string, unknown>
   const init = Array.isArray(spec.initContainers) ? spec.initContainers : [];
   const initHint = /pgautoupgrade|postgres-upgrade|pg_upgrade|pg_dumpall|pg_restore/.exec(JSON.stringify(init));
 
+  // Native sidecars (initContainers with restartPolicy: Always) run for the pod's whole life, like containers.
   const containers = Array.isArray(spec.containers) ? spec.containers : [];
-  containers.forEach((c, i) => {
+  const running: Array<[unknown, Path]> = [
+    ...containers.map((c, i): [unknown, Path] => [c, [...specPath, 'containers', i]]),
+    ...init.flatMap((c, i): Array<[unknown, Path]> => (isRecord(c) && c.restartPolicy === 'Always' ? [[c, [...specPath, 'initContainers', i]]] : [])),
+  ];
+  running.forEach(([c, cPath], i) => {
     if (!isRecord(c)) return;
     const imageRef = asString(c.image);
     const image = imageRef === null ? null : parseImage(imageRef);
     if (!image) return;
-    const cPath: Path = [...specPath, 'containers', i];
 
     let pgdata: string | null = null;
     let initdbArgs: string | null = null;
