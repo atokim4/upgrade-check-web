@@ -35,7 +35,7 @@ export interface Link {
 const PY = new Set([".py"]);
 const JS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte"]);
 const OTHER_CODE = new Set([".go", ".rb", ".php", ".java", ".kt", ".cs", ".rs", ".swift", ".dart", ".ex", ".exs"]);
-const CONFIG = new Set([".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".json", ".properties", ".env"]);
+const CONFIG = new Set([".tfvars", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".json", ".properties", ".env"]);
 /** Release notes and docs mention old models on purpose. */
 const PROSE_FILE = /^(?:changelog|changes|history|news|releases?)(?:\.|$)/i;
 
@@ -44,7 +44,9 @@ type FileKind = Language | "code" | "config" | "skip";
 export function fileKind(file: string): FileKind {
   const name = basename(file);
   if (PROSE_FILE.test(name)) return "skip";
-  const ext = extname(name).toLowerCase();
+  // `terraform.tfvars.example`, `config.yml.sample`: the template is read as the file it stands for.
+  const template = /\.(?:example|sample|dist|template)$/i.test(name) && !/^\.env(?:\.|$)/.test(name);
+  const ext = extname(template ? name.replace(/\.[^.]+$/, "") : name).toLowerCase();
   if (PY.has(ext)) return "py";
   if (JS.has(ext)) return "js";
   if (OTHER_CODE.has(ext)) return "code";
@@ -118,7 +120,7 @@ export function scanOpenAI(
         continue;
       }
       collectIds(file, text, literal.start + literal.quote.length, literal.value, out, today,
-        literalBlocker(src, literal.start, literal.end));
+        literalBlocker(src, literal.start, literal.end, literal.value));
     }
     analyzeCallSites(file, src, out, defaults, today);
   } else {
@@ -133,12 +135,18 @@ export function scanOpenAI(
             collectIds(file, text, offset, line, out, today, first ? lineBlocker(line, first[0].replace(/[.:]+$/, "")) : null);
           }
         } else {
-          for (const m of line.matchAll(QUOTED)) {
+          const values = [...line.matchAll(QUOTED)];
+          // `[]string{"gpt", "o1", "o3"}`: keys (`"reasoning": {...}`) don't count as items.
+          const items = values.filter((m) => !/^\s*:/.test(line.slice(m.index + m[0].length)));
+          if (prefixValues(items.map((m) => m[2]!))) values.length = 0;
+          for (const m of values) {
             const start = offset + m.index;
             if (!isSetting(text, start, start + m[0].length, m[2]!)) continue;
             const key = /^\s*:/.test(line.slice(m.index + m[0].length)) ? "key" : null;
             // `{"model": "gpt-4o", "fallbacks": ["gpt-4o-mini"]}` on one line: swapping both makes them equal.
-            collectIds(file, text, start + 1, m[2]!, out, today, key ?? bracketBlocker(line, m.index) ?? valuesBlocker(line));
+            collectIds(file, text, start + 1, m[2]!, out, today,
+              key ?? bracketBlocker(line, m.index) ?? valuesBlocker(line) ?? namedBlocker(line, m.index, m[2]!) ??
+              catalogBlocker(line.slice(0, m.index), objectAround(text, start)));
           }
         }
       }
@@ -204,13 +212,24 @@ function markHeld(text: string, findings: Finding[], spans: [number, number][], 
 /** Matching code tests a model name (`startswith("gpt-4o")`, `"gpt-4o" in name`); it doesn't send one. */
 const MATCHER_BEFORE =
   /(?:\.(?:startswith|endswith|startsWith|endsWith|includes|indexOf|match|search)|\b(?:encoding_for_model|encodingForModel|fnmatch|re\.(?:match|search)))\s*\(\s*\(?\s*(?:(["'])[^"'\n]*\1\s*,\s*)*$|tiktoken_model_name\s*=\s*$/;
-const MATCHER_AFTER = /^\s*(?:(?:,\s*["'][^"'\n]*["']\s*)*\)\s*)?(?:not\s+in|in)\s/;
+const MATCHER_AFTER = /^\s*(?:(?:(?:,\s*["'][^"'\n]*["']\s*)*\)\s*)?(?:not\s+in|in)\s|[!=]==?(?!>))/;
+/**
+ * Also name tests: a comparison (`model == "gpt-5"`, `=== "gpt-5" ||`), Go's `strings.HasPrefix(model, "gpt-5")`,
+ * and keys that hold a family name to match on (`family: 'gpt-5'`, `prefix = "o3"`).
+ */
+const NAME_TEST_BEFORE =
+  /(?:[!=]==?\s*|\bstrings\.(?:HasPrefix|HasSuffix|Contains|EqualFold|Index)\s*\([^"'`\n]*,\s*|\b(?:family|prefix|prefixes|pattern)["']?\s*[:=]\s*)$/;
+/** A regex in a string (`r"^gpt-5\.1$"`, `"^gpt-5(?:-\d{4})?$"`): it matches names, so gpt-5 in it is not a model. */
+const REGEX_LIKE = /\\[.dwsbDWS]|\(\?[:=!<]|^\^|[^\\]\$$/;
+/** Code inside a string (`e.g., dspy.LM('openai/gpt-5', temperature=1.0)`): an example in a help text. */
+const CODE_IN_STRING = /[A-Za-z_]\w*\(\s*["'][^"']*["']\s*,/;
 
 /** Whether the string literal [start, end) reads as a model setting rather than prose or a name test. */
 function isSetting(text: string, start: number, end: number, value: string): boolean {
-  if (PROSE.test(value)) return false;
+  if (PROSE.test(value) || REGEX_LIKE.test(value) || CODE_IN_STRING.test(value)) return false;
   const lineStart = text.lastIndexOf("\n", start - 1) + 1;
-  if (MATCHER_BEFORE.test(text.slice(lineStart, start))) return false;
+  const before = text.slice(lineStart, start);
+  if (MATCHER_BEFORE.test(before) || NAME_TEST_BEFORE.test(before)) return false;
   const lineEnd = text.indexOf("\n", end);
   return !MATCHER_AFTER.test(text.slice(end, lineEnd === -1 ? text.length : lineEnd));
 }
@@ -233,38 +252,229 @@ function dropIgnored(text: string, out: OpenAIScan): OpenAIScan {
   return { ...out, findings, edits: out.edits.filter((e) => !ignored(lineOf(text, e.start))) };
 }
 
-type FixBlocker = "key" | "list" | null;
+type FixBlocker = "key" | "list" | "catalog" | "named" | null;
 
-const BLOCKER_NOTE: Record<"key" | "list", string> = {
+const BLOCKER_NOTE: Record<Exclude<FixBlocker, null>, string> = {
+  catalog: " It is an entry in a model catalog or price table, not a request: mark it deprecated or remove it after " +
+    "the shutdown and add the replacement as its own entry (its prices and limits differ); --fix leaves it.",
+  named: " The constant is named after this model: swapping only the value would make the name lie. Add a constant " +
+    "for the replacement and move the callers to it; --fix leaves it.",
   key: " It is a key (a price or limit table?): add an entry for the replacement by hand; --fix leaves it.",
   list: " It sits in a list of several models: --fix leaves it so the list doesn't end up with duplicates.",
 };
 
 /** Whether swapping the literal [start, end) would break a table: a dict key or one of several IDs in a list. */
-function literalBlocker(src: Source, start: number, end: number): FixBlocker {
-  const open = enclosingOpen(src, start);
+function literalBlocker(src: Source, start: number, end: number, value: string): FixBlocker {
+  const lineStart = src.text.lastIndexOf("\n", start - 1) + 1;
+  const named = namedBlocker(src.text.slice(lineStart, end), start - lineStart, value);
+  if (named) return named;
+  const open = openAt(src, start);
   if (open === -1) return null;
-  const before = src.text.slice(open + 1, start).trimEnd();
-  if (src.text[open] === "{" && /^\s*:/.test(src.text.slice(end)) && (before === "" || before.endsWith(","))) return "key";
+  // Comments between entries don't count; a TS type map separates its members by newlines alone.
+  const before = src.text.slice(open + 1, start).replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(src.language === "py" ? /#[^\n]*$/gm : /\/\/[^\n]*$/gm, "").trimEnd();
+  // Not after `?` / `:` / operators: `{ model: fast ? "gpt-5-mini" : "gpt-5" }` is a value.
+  if (src.text[open] === "{" && /^\s*:/.test(src.text.slice(end)) && !/[?:=&|+(-]$/.test(before)) return "key";
+  const catalog = catalogGroup(src, open, start);
+  if (catalog) return catalog;
+  if (src.text[open] === "{" && src.language === "py") {
+    // A Python set (`{"o1", "o3", "gpt-5"}`): no key/value colons at its top level. (In JS a `{` without colons
+    // is a block.)
+    const close = matchingClose(src, open);
+    const body = src.text.slice(open + 1, close);
+    if (close === -1 || body.includes(":")) return null;
+    return stringsIn(src, open, close).filter((x) => classify(x.value) !== null).length >= 2 ? "list" : null;
+  }
   if (src.text[open] !== "[" && src.text[open] !== "(") return null;
-  if (/[\w$.]\s*$/.test(src.text.slice(Math.max(0, open - 1), open))) return null; // a call, not a tuple
   const close = matchingClose(src, open);
-  const siblings = src.strings.filter((x) => x.start > open && x.start < close && classify(x.value) !== null);
+  const siblings = stringsIn(src, open, close).filter((x) => classify(x.value) !== null);
+  if (/[\w$.\])]\s*$/.test(src.text.slice(Math.max(0, open - 1), open))) {
+    if (src.text[open] === "(") return null; // a call, not a tuple
+    // `Literal["gpt-5", "o3"]` is a list of names; `MODELS["gpt-5"]` looks up a key that stays as it is.
+    return siblings.length >= 2 ? "list" : "key";
+  }
   return siblings.length >= 2 ? "list" : null;
 }
 
 /** A tuple/list like `("gpt-", "o1", "o3")` holds name prefixes for matching, not models to call. */
 function inPrefixList(src: Source, start: number): boolean {
-  const open = enclosingOpen(src, start);
+  const open = openAt(src, start);
   if (open === -1 || (src.text[open] !== "(" && src.text[open] !== "[")) return false;
   const close = matchingClose(src, open);
-  return src.strings.some((x) => x.start > open && x.start < close && /^[a-z][\w.]*-$/.test(x.value));
+  return prefixValues(directValues(src, open, close).map((x) => x.value));
+}
+
+/** The string literals that are items of the group itself: not nested deeper, not keys (`"name": ...`). */
+function directValues(src: Source, open: number, close: number): Source["strings"] {
+  return stringsIn(src, open, close).filter((x) => openAt(src, x.start) === open && !/^\s*:/.test(src.text.slice(x.end, x.end + 40)));
+}
+
+const enclosingCache = new WeakMap<Source, Int32Array>();
+/** `enclosingOpen` from the file's one-pass index (generated catalogs hold thousands of literals). */
+function openAt(src: Source, at: number): number {
+  let index = enclosingCache.get(src);
+  if (!index) enclosingCache.set(src, index = enclosingIndex(src));
+  return index[at]!;
+}
+
+/** The string literals that start inside (open, close), by binary search over the sorted `src.strings`. */
+function stringsIn(src: Source, open: number, close: number): Source["strings"] {
+  let lo = 0;
+  let hi = src.strings.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (src.strings[mid]!.start <= open) lo = mid + 1;
+    else hi = mid;
+  }
+  let end = lo;
+  while (end < src.strings.length && src.strings[end]!.start < close) end += 1;
+  return src.strings.slice(lo, end);
+}
+
+/** Bare family names that only make sense as prefixes to match on. */
+const FAMILY_WORD = /^(?:gpt|chatgpt|o|claude|gemini|deepseek|[a-z][\w.]*-)$/;
+
+/**
+ * Items of one list that read as name prefixes: at least two items, one a family word or `gpt-`, or three bare
+ * o-series names (o1, o3, o4).
+ */
+function prefixValues(values: readonly string[]): boolean {
+  if (values.length < 2) return false;
+  return values.some((v) => FAMILY_WORD.test(v)) || values.filter((v) => /^o\d$/.test(v)).length >= 3;
+}
+
+/** Keys that name a model inside a catalog entry (`{ id: "gpt-5", label: "GPT-5" }`). */
+const CATALOG_ID_KEY = /\b(?:id|name|api_?name|apiName|model_name|slug)["']?\s*[:=]\s*$/;
+/** Keys only a catalog or price entry has: a request never sends these next to its model. */
+const CATALOG_KEYS =
+  /["']?\b(?:label|display_?name|displayName|context_?window|contextWindow|context_?length|contextLength|pricing|\w*price\w*|\w*cost\w*|modalities|capabilities|deprecated|replacement|knowledge_?cutoff|owned_by|release_date|released|open_weights)\b["']?\s*[:=]/i;
+
+/**
+ * "catalog" for a model ID that is an entry in a catalog or price table: the value of `id` / `name` next to a
+ * catalog-only key, or a positional argument next to bare numbers (`tokenPriced("openai", "gpt-5", 1.25, 10)`,
+ * `Model("o3", 200000)`, `(("gpt-5-mini",), 0.25, 2.0)`).
+ */
+function catalogGroup(src: Source, open: number, start: number): FixBlocker {
+  const lineStart = src.text.lastIndexOf("\n", start - 1) + 1;
+  let group = open;
+  for (let depth = 0; depth < 2 && group !== -1; depth += 1) {
+    const facts = groupFacts(src, group);
+    if (!facts) return null;
+    if (depth === 0) {
+      const before = src.text.slice(Math.max(lineStart, group + 1), start);
+      if (CATALOG_ID_KEY.test(before) && facts.catalogKeys) return "catalog";
+      // The ID is an item of its own (first, or after a comma), not the value of `model=` / `key:`.
+      const lead = src.text.slice(Math.max(group + 1, start - 200), start);
+      const positional = start - 200 <= group ? /(?:^|,)\s*$/.test(lead) : /,\s*$/.test(lead);
+      // `Model("gpt-5", k(400), deprecated=True, replacement="...")`: a positional ID in a catalog record.
+      if (src.text[group] === "(" && positional && facts.catalogKeys) return "catalog";
+      // `tokenPriced("openai", "gpt-5", 1.25, 10)`: the ID is a positional item next to bare numbers.
+      if (positional && facts.positionalNumber) return "catalog";
+      // Only a tuple / list literal reaches one level up (`(("gpt-5-mini",), 0.25)`); a call's wrapper
+      // (`wait_for(create(model="gpt-5"), 30)`) says nothing about the ID.
+      if (!positional || isCall(src, group)) return null;
+    } else if (facts.positionalNumber) {
+      return "catalog";
+    }
+    group = openAt(src, group);
+  }
+  return null;
+}
+
+interface GroupFacts { catalogKeys: boolean; positionalNumber: boolean }
+/** Per-file cache: a generated catalog has thousands of IDs in one array, so each group is read once. */
+const groupCache = new WeakMap<Source, Map<number, GroupFacts | null>>();
+
+function groupFacts(src: Source, open: number): GroupFacts | null {
+  let cache = groupCache.get(src);
+  if (!cache) groupCache.set(src, cache = new Map());
+  if (cache.has(open)) return cache.get(open)!;
+  const close = matchingClose(src, open);
+  const facts = close === -1 ? null : {
+    catalogKeys: CATALOG_KEYS.test(topLevelKeys(src, open, close)),
+    positionalNumber: (src.text[open] === "(" || src.text[open] === "[") && positionalNumber(src, open, close),
+  };
+  cache.set(open, facts);
+  return facts;
+}
+
+/** Whether `(` at `open` starts a call's arguments (`f(`, `x.y(`, `a[0](`) rather than a tuple. */
+function isCall(src: Source, open: number): boolean {
+  return src.text[open] === "(" && /[\w$\])]\s*$/.test(src.text.slice(Math.max(0, open - 40), open));
+}
+
+/**
+ * The group's own top level as text, with everything nested and every string blanked out except string keys:
+ * catalog keys are looked for there, so `default_headers={"X-Label": ...}` or a prompt saying "price:" don't count.
+ */
+function topLevelKeys(src: Source, open: number, close: number): string {
+  const out: string[] = [];
+  let depth = 0;
+  for (let i = open + 1; i < close; i += 1) {
+    if (src.mask[i] !== CODE) continue;
+    const c = src.text[i]!;
+    if ("([{".includes(c)) depth += 1;
+    else if (")]}".includes(c)) depth -= 1;
+    else if (depth === 0) out.push(c);
+    else out.push(" ");
+  }
+  for (const x of stringsIn(src, open, close)) {
+    if (openAt(src, x.start) === open && /^\s*:/.test(src.text.slice(x.end, x.end + 40))) out.push(` "${x.value}": `);
+  }
+  return out.join("");
+}
+
+/** Whether the group [open, close] has a bare number as one of its own top-level positional items. */
+function positionalNumber(src: Source, open: number, close: number): boolean {
+  let depth = 0;
+  let item = open + 1;
+  for (let i = open + 1; i <= close; i += 1) {
+    const c = src.text[i]!;
+    if (src.mask[i] !== CODE) continue;
+    if ("([{".includes(c)) depth += 1;
+    else if (")]}".includes(c) && i !== close) depth -= 1;
+    if (depth === 0 && (c === "," || i === close)) {
+      if (/^\s*-?\d[\d_]*(?:\.\d+)?\s*$/.test(src.text.slice(item, i))) return true;
+      item = i + 1;
+    }
+  }
+  return false;
+}
+
+/** "catalog" when the text before the ID ends in a catalog `id` / `name` key and its object has a catalog-only key. */
+function catalogBlocker(before: string, object: string): FixBlocker {
+  return CATALOG_ID_KEY.test(before) && CATALOG_KEYS.test(object) ? "catalog" : null;
+}
+
+/**
+ * The text around `at` that a catalog entry would span, for JSON and other files without a bracket parser: from
+ * the `{` before it to 25 lines after it (catalog entries nest their prices and limits in sub-objects).
+ */
+function objectAround(text: string, at: number): string {
+  const open = text.lastIndexOf("{", at);
+  if (open === -1) return "";
+  let end = at;
+  for (let i = 0; i < 25 && end !== -1; i += 1) end = text.indexOf("\n", end + 1);
+  return text.slice(open, end === -1 ? text.length : end);
+}
+
+/** Lower-case letters and digits only: `GPT_5_MINI`, `gpt5_mini`, `ModelGPT5Mini` and `gpt-5-mini` meet here. */
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** "named" for `GPT_5_MINI = "gpt-5-mini"`, `static let gpt5 = "gpt-5"`, `ModelGPT5Mini = "gpt-5-mini"`. */
+function namedBlocker(line: string, at: number, value: string): FixBlocker {
+  // The name right before `=` (an optional type in between has no commas: `def f(use_gpt5: bool, model=...)`).
+  const m = /([A-Za-z_$][\w$]*)\s*(?::\s*[\w.[\]| ]*?)?\s*:?=\s*["'`]?$/.exec(line.slice(0, at + 1));
+  const id = squash(value.replace(/^[\w-]+[/:]/, ""));
+  if (!m || id.length < 3) return null;
+  return squash(m[1]!).includes(id) ? "named" : null;
 }
 
 /** The same check for a config line: a YAML/TOML key, or a line that lists several models. */
 function lineBlocker(line: string, raw: string): FixBlocker {
   const escaped = raw.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
   if (new RegExp(`^\\s*["']?${escaped}["']?\\s*[:=]`).test(line)) return "key";
+  if (/^\s*\[[^\]]*\]\s*$/.test(line)) return "key"; // a TOML table header: [models."gpt-5-mini"]
   const ids = [...line.matchAll(TOKEN)].filter((m) => classify(m[0].replace(/[.:]+$/, "")) !== null);
   return ids.length >= 2 ? "list" : null;
 }
@@ -291,6 +501,8 @@ function collectIds(
 ): void {
   for (const match of chunk.matchAll(TOKEN)) {
     const raw = match[0].replace(/[.:]+$/, "");
+    // `gpt-5\.1` inside a pattern: the backslash escapes the next character of a longer name.
+    if (chunk[match.index + match[0].length] === "\\") continue;
     const parsed = parseModelId(raw);
     if (!parsed) continue;
     const notice = noticeFor(parsed.base)!;
@@ -901,6 +1113,7 @@ function holdSwap(text: string, out: OpenAIScan, spans: [number, number][], note
 }
 
 const RISKY_KEYS = new Set([...TOOL_KEYS, ...SAMPLING_KEYS]);
+const AGNO_RESPONSES = /^\s*OpenAIResponses\s*\(/;
 const MODEL_KEY_VALUE = /\b(?:model|model_name|modelName)\s*[=:]\s*(?=[A-Za-z_$])/g;
 
 /**
@@ -933,12 +1146,14 @@ function holdWrappers(src: Source, out: OpenAIScan, known: ReadonlySet<number>):
   for (const { open, entry } of candidates.values()) {
     const found = resolveInFile(src, entry);
     if (found?.state !== "swap") continue;
+    // agno's `OpenAIResponses(id=...)` sends everything through the Responses API, where tools are fine.
+    const risk = AGNO_RESPONSES.test(src.text.slice(entry.valueStart, entry.end)) ? SAMPLING_KEYS : RISKY_KEYS;
     let group = open;
     let risky = false;
     for (let depth = 0; depth < 3 && group !== -1 && !known.has(group); depth += 1) {
       const close = matchingClose(src, group);
       if (close === -1) break;
-      if (entries(src, group, close).some((e) => e.key && RISKY_KEYS.has(e.key))) {
+      if (entries(src, group, close).some((e) => e.key && risk.has(e.key))) {
         risky = true;
         break;
       }
