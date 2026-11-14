@@ -1,5 +1,5 @@
 export type Severity = "error" | "warn";
-export type Provider = "openai" | "anthropic";
+export type Provider = "openai" | "anthropic" | "perspective";
 
 export interface Finding {
   file: string;

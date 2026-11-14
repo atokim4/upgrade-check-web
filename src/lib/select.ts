@@ -50,7 +50,7 @@ const EXTRA_CONFIG = [
   /(?:^|\/)(?:k8s|kubernetes|kube|manifests|deploy|deployment|helm|charts?)\/(?:[^/]+\/)*[^/]+\.ya?ml$/,
   /(?:^|\/)\.env\.(?:example|sample|template|dist)$/i,
   /(?:^|\/)(?:config|settings|models?|llm|agents?|litellm[^/]*)\.(?:ya?ml|toml|ini|cfg)$/i,
-  /(?:^|\/)(?:pyproject\.toml|requirements[^/]*\.txt)$/,
+  /(?:^|\/)(?:pyproject\.toml|requirements[^/]*\.(?:txt|in)|setup\.cfg|Pipfile|Gemfile|composer\.json)$/,
   /(?:^|\/)(?:\.eslintrc(?:\.(?:js|cjs|mjs|json|ya?ml))?|eslint\.config\.[cm]?[jt]s|\.eslintignore)$/,
 ];
 const PYTHON = /\.py$/;
@@ -69,7 +69,7 @@ export function tierOf(path: string): Tier | undefined {
   const n26 = node26Kind(path);
   if (supabaseKind(path) || pf === "other" || pf === "env" || (n26 && n26 !== "source" && n26 !== "lockfile")) return "config";
   if (EXTRA_CONFIG.some((re) => re.test(path))) return "config";
-  if (n26 === "source" || pf === "source" || PYTHON.test(name)) return "source";
+  if (n26 === "source" || pf === "source" || PYTHON.test(name) || PERSPECTIVE_SOURCE(path)) return "source";
   if (name.endsWith(".json") && !NOT_WORKFLOW.test(path)) return "workflow";
   return undefined;
 }
@@ -90,6 +90,10 @@ function configRank(path: string): number {
 
 /** Words in a path that point at the code the engines look for: model calls, search clients, database clients. */
 const TOPIC = /(?:^|[/_.-])(?:ai|llms?|openai|gpt|claude|anthropic|gemini|google|agents?|chat|bots?|search|retrievers?|tools|providers?|models?|prisma|db|database|config|settings)(?:[/_.-]|$)/i;
+/** Perspective API clients written in languages the other engines don't read (Discourse plugins, PHP, Go, JVM). */
+/** A file named after Perspective or moderation (detectors/perspective.py, moderationService.js). */
+const PERSPECTIVE_NAME = /perspective|toxic|moderat/i;
+const PERSPECTIVE_SOURCE = (path: string) => /perspective|toxic|moderat/i.test(path) && /\.(?:rb|php|go|java|kt|cs)$/i.test(path);
 
 /** Source files most likely to hold what the checks look for: Edge Functions and server code first. */
 function sourceRank(path: string): number {
@@ -98,7 +102,7 @@ function sourceRank(path: string): number {
   const name = path.slice(path.lastIndexOf("/") + 1);
   if (/(^|\/)(server|api|middleware|webhooks?|routes|functions)(\/|\.)/.test(path) || /supabase/i.test(path)) return 1;
   // A file named after the topic (retrievers/google/google.py) beats a folder that merely is (gpt_researcher/...).
-  if (TOPIC.test(name)) return 1;
+  if (TOPIC.test(name) || PERSPECTIVE_NAME.test(name)) return 1;
   if (TOPIC.test(path)) return 2;
   if (/(^|\/)scripts\//.test(path) || /^[^/]*\.config\.[cm]?[jt]s$/.test(path)) return 3;
   if (/(^|\/)(src|lib|app)\//.test(path)) return 4;

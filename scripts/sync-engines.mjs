@@ -19,7 +19,7 @@ const ENGINES = [
   { id: "node26", repo: "node26-lts-upgrade", sibling: "../../../node26-lts-check/project", skip: ["cli.ts", "fs-repo.ts", "scan.ts", "action", "report"] },
   { id: "preflight", repo: "vibe-preflight", sibling: "../../../vibe-preflight-skill/project", skip: ["cli.ts", "project.ts", "scan.ts", "action", "report.ts", "sarif.ts", "summary.ts"] },
   { id: "prisma", repo: "prisma-accelerate-exit", sibling: "../../../prisma-accelerate-exit/project", only: ["types.ts", "text-rules.ts"] },
-  { id: "llm", repo: "llm-retire-scan", sibling: "../../../openai-gpt4-retire/project", only: ["types.ts", "source.ts", "openai", "anthropic"] },
+  { id: "llm", repo: "llm-retire-scan", sibling: "../../../openai-gpt4-retire/project", only: ["types.ts", "source.ts", "openai", "anthropic", "perspective"] },
   { id: "deno", repo: "deno-exit", sibling: "../../../deno-exit/project", only: ["types.ts", "apis.ts", "specifiers.ts", "deploy.ts"] },
   { id: "pg18", repo: "pg18-upgrade-check", sibling: "../../../pg18-upgrade-check/project", only: ["model.ts", "image.ts", "rules.ts", "sources"] },
   { id: "n8n", repo: "n8n-v3-check", sibling: "../../../n8n-v3-template-census/project", only: ["types.ts", "rules.ts", "check.ts"] },

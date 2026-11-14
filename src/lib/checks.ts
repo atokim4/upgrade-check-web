@@ -49,6 +49,12 @@ export const CHECKERS: readonly CheckerEntry[] = [
     load: () => import("../checkers/google-cse.ts"),
   },
   {
+    id: "perspective",
+    name: "Google Perspective API shutdown",
+    uses: (r) => anyText(r, /commentanalyzer|perspective-api-client|perspectiveapi|PERSPECTIVE_(?:API_)?KEY|comment-analyzer|perspective-api-bundle|google_perspective|(?:^|["'])perspective\s*(?:[=<>~!;@[]|["']|$)/im),
+    load: () => import("../checkers/perspective.ts"),
+  },
+  {
     id: "deno",
     name: "Deno Deploy and Val Town",
     uses: (r) => anyPath(r, /(?:^|\/)deno\.jsonc?$/) || anyText(r, /\bDeno\.|deployctl|deno\s+deploy|esm\.town|val\.town|\$fresh\//),

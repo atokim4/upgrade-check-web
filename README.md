@@ -17,6 +17,7 @@ and a diff for the cases that can be rewritten safely.
 | 2026-12-01 | `@supabase/server/adapters/*` removed; direct writes to `cron.job` blocked | [vibe-preflight](https://github.com/atokim4/vibe-preflight) (breaking checks) |
 | 2026-12-01 | Gemini API routes `gemini-2.5-pro` and `gemini-2.5-flash` requests to other models | this page only |
 | 2026-12-10 / 2027-01-10 | Val Town goes read-only, then shuts down | [deno-exit](https://github.com/atokim4/deno-exit) |
+| 2026-12-31 | Last day of Google's Perspective API (Comment Analyzer) | [llm-retire-scan](https://github.com/atokim4/llm-retire-scan) (`--provider perspective`) |
 | 2027-01-01 | Google's Custom Search JSON API ends for existing customers | this page only |
 | 2027-01-14 | OpenAI shuts down GPT-4o and GPT-4.1 (and `gpt-6-luna` needs `reasoning_effort: "none"` for tools) | [llm-retire-scan](https://github.com/atokim4/llm-retire-scan) |
 | April 2027 | Deno Deploy is sunset | [deno-exit](https://github.com/atokim4/deno-exit) |
@@ -49,7 +50,7 @@ their findings link to Google's own notices.
    all its fixes as one patch for `git apply`.
 
 `?repo=owner/repo` starts a check on load; `?only=prisma,llm` limits it to some checkers (ids: `supabase-cli-v3`,
-`node26`, `preflight`, `prisma`, `llm`, `gemini-25`, `google-cse`, `deno`, `pg18`, `n8n`).
+`node26`, `preflight`, `prisma`, `llm`, `gemini-25`, `google-cse`, `perspective`, `deno`, `pg18`, `n8n`).
 
 The result says how many files it read and how many it left out. If a repo has more SQL files than the limit,
 the grants checks are switched off rather than run on half a schema. For a full scan, run the CLIs:

@@ -1,6 +1,6 @@
 {
   "name": "upgrade-check-web",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Is your repo hit by a 2026-27 shutdown? Paste a public GitHub repo and see what GPT-4o, Claude Sonnet 4.5, Gemini 2.5, Prisma Accelerate, Google Custom Search, Val Town/Deno Deploy, Postgres 18, n8n 3.0, Node 26 and Supabase changes break in it, plus a page per deadline. Runs in the browser.",
   "type": "module",

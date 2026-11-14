@@ -63,6 +63,7 @@ export const CHECKER_NAMES: Record<CheckerId, string> = {
   llm: "OpenAI and Claude model retirements",
   "gemini-25": "Gemini 2.5 on the Gemini API",
   "google-cse": "Google Custom Search JSON API",
+  perspective: "Google Perspective API shutdown",
   deno: "Deno Deploy and Val Town",
   pg18: "Postgres 18 in Docker",
   n8n: "n8n 3.0 workflows",
@@ -197,6 +198,17 @@ export const DEADLINES: readonly Deadline[] = [
     },
     checkers: ["llm"],
     page: "gpt-5-o3-shutdown",
+  },
+  {
+    id: "perspective",
+    name: "Google Perspective API: last day",
+    what: "Last day Perspective (Comment Analyzer) answers; Google offers no migration support.",
+    date: "2026-12-31",
+    source: {
+      url: "https://perspectiveapi.com/",
+      label: "perspectiveapi.com",
+    },
+    checkers: ["perspective"],
   },
   {
     id: "google-cse",

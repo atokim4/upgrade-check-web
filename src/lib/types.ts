@@ -8,6 +8,7 @@ export type CheckerId =
   | "llm"
   | "gemini-25"
   | "google-cse"
+  | "perspective"
   | "deno"
   | "pg18"
   | "n8n"
